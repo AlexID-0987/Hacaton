@@ -2,6 +2,7 @@ using Hacaton.Data;
 using Hacaton.Models;
 using Hacaton.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 
 namespace Hacaton.Controllers;
@@ -54,4 +55,6 @@ public class AssistantController : ControllerBase
         var response = await _recommendationService.Generate(products, message);
         return Ok(response);
     }
+   
+
 }

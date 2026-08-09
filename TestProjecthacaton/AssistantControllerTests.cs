@@ -122,5 +122,21 @@ namespace TestProjecthacaton
             Assert.That(dto.Category, Is.EqualTo("Coffee"));
             Assert.That(dto.ImageUrl, Is.EqualTo("cappuccino.jpg"));
         }
+        [Test]
+        public async Task GetProducts_ReturnsEmptyList_WhenNoProductsExist()
+        {
+            // Act
+            var result = await _controller.GetProducts();
+
+            // Assert
+            Assert.That(result.Result, Is.TypeOf<OkObjectResult>());
+
+            var okResult = result.Result as OkObjectResult;
+
+            var products = okResult!.Value as List<ProductSummaryDto>;
+
+            Assert.That(products, Is.Not.Null);
+            Assert.That(products, Is.Empty);
+        }
     }
 }
