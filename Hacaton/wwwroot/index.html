@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Product Assistant</title>
+    <style>
+        :root {
+            --bg: #f3f4f6;
+            --card: #ffffff;
+            --muted: #6b7280;
+            --primary: #1d7a4d;
+            --primary-dark: #155f3e;
+            --accent: #f8d24a;
+            --soft-green: #ebfff3;
+            --soft-yellow: #fff6d4;
+            --soft-orange: #fff0e6;
+            --text: #1f2937;
+            --line: #e5e7eb;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .topbar {
+            background: linear-gradient(135deg, #eafaf1, #eef7ff);
+            border-bottom: 1px solid rgba(29, 122, 77, 0.12);
+            padding: 12px 20px;
+            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.03);
+        }
+
+        .topbar-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 800;
+            font-size: clamp(1.5rem, 2vw, 2.2rem);
+            color: var(--primary-dark);
+            letter-spacing: -0.04em;
+        }
+
+        .brand-logo {
+            width: 120px;
+            height: 36px;
+            object-fit: contain;
+            display: block;
+            background: transparent;
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.04));
+        }
+
+        .page {
+            max-width: 1200px;
+            margin: 24px auto 48px;
+            padding: 0 18px;
+        }
+
+        .promo {
+            display: grid;
+            grid-template-columns: 2.1fr 1fr 1fr;
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+
+        .promo-card {
+            background: linear-gradient(135deg, #d7c2ff, #e9d5ff);
+            border-radius: 22px;
+            min-height: 180px;
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+        }
+
+        .promo-card.primary {
+            background: linear-gradient(135deg, #6a61d8, #7a9cff);
+            color: white;
+        }
+
+        .promo-card.secondary {
+            background: linear-gradient(135deg, #fff6cc, #ffe59a);
+        }
+
+        .promo-card.tertiary {
+            background: linear-gradient(135deg, #ddfce9, #bef7d4);
+        }
+
+        .promo-card summary {
+            list-style: none;
+            cursor: pointer;
+        }
+
+        .promo-card summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .promo-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.18);
+            border-radius: 999px;
+            padding: 7px 12px;
+            width: fit-content;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            letter-spacing: 0.02em;
+        }
+
+        .promo-card h2 {
+            margin: 0;
+            font-size: clamp(1.6rem, 2.5vw, 3rem);
+            line-height: 1.1;
+            letter-spacing: -0.04em;
+        }
+
+        .mini-product-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .mini-product-item {
+            background: rgba(255,255,255,0.7);
+            border-radius: 14px;
+            overflow: hidden;
+            padding: 8px;
+            border: 1px solid rgba(15, 23, 42, 0.06);
+        }
+
+        .mini-product-item img {
+            width: 100%;
+            height: 70px;
+            object-fit: cover;
+            border-radius: 10px;
+            display: block;
+            background: #f3f4f6;
+        }
+
+        .mini-product-item .name {
+            font-weight: 700;
+            font-size: 0.85rem;
+            margin-top: 8px;
+        }
+
+        .mini-product-item .price {
+            color: var(--muted);
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        .filter-panel {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(220px, 1fr));
+            gap: 16px;
+            margin: 20px 0 28px;
+        }
+
+        .filter-panel label {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-weight: 700;
+            color: var(--text);
+            min-width: 0;
+        }
+
+        .filter-panel .select-wrap {
+            position: relative;
+        }
+
+        .filter-panel select {
+            width: 100%;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            padding: 14px 46px 14px 16px;
+            border-radius: 14px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            font-size: 1rem;
+            color: var(--text);
+            outline: none;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+            cursor: pointer;
+        }
+
+        .filter-panel .select-wrap::after {
+            content: "▾";
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--primary-dark);
+            pointer-events: none;
+            font-size: 1.2rem;
+        }
+
+        .assistant-box {
+            background: var(--card);
+            border-radius: 22px;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+            padding: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .assistant-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .assistant-header h3 {
+            margin: 0;
+            font-size: 1.8rem;
+        }
+
+        .assistant-header .chip {
+            background: var(--soft-green);
+            color: var(--primary-dark);
+            border-radius: 999px;
+            padding: 8px 14px;
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #f9fafb;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 10px 14px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 74px;
+            resize: vertical;
+            border: none;
+            background: transparent;
+            font-size: 1.05rem;
+            color: var(--text);
+            outline: none;
+            font-family: inherit;
+        }
+
+        .send-btn {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 14px;
+            padding: 14px 18px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            min-width: 160px;
+        }
+
+        .result-box {
+            background: #fbfbfc;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 20px 22px;
+            margin-top: 20px;
+        }
+
+        .result-box h4 {
+            margin: 0 0 14px;
+            font-size: 1.5rem;
+        }
+
+        .result-box .meta {
+            color: var(--muted);
+            font-size: 1rem;
+            margin: 8px 0;
+        }
+
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-top: 18px;
+        }
+
+        .product-card {
+            background: white;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+        }
+
+        .product-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            display: block;
+            background: #f3f4f6;
+        }
+
+        .product-info {
+            padding: 12px;
+        }
+
+        .product-name {
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .product-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .total-row {
+            margin-top: 18px;
+            padding-top: 14px;
+            border-top: 1px solid var(--line);
+            display: flex;
+            justify-content: space-between;
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+
+        @media (max-width: 860px) {
+            .promo {
+                grid-template-columns: 1fr;
+            }
+
+            .assistant-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+
+            .input-wrap {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .send-btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <img class="brand-logo" src="https://allretail.ua/static/files/originals/2/0c/81ef94822fc56477bd777a767f47e0c2.svg" alt="Сільпо" />
+            </div>
+            <div style="color: var(--muted); font-size: 0.9rem;">AI помічник для покупок</div>
+        </div>
+    </div>
+
+    <div class="page">
+        <div class="promo">
+            <div class="promo-card primary">
+                <div class="promo-badge">Найкраща комбінація</div>
+                <h2>Підібери продукти для сніданку до 350 грн</h2>
+            </div>
+            <div class="promo-card secondary">
+                <div class="promo-badge">Свіжі</div>
+                <label style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem; font-weight:700; color: var(--text);">
+                    Фрукти
+                    <select id="fruitSelect" style="padding:12px 14px; border-radius:12px; border:1px solid rgba(148,163,184,0.25); background:#fff; font-size:1rem;">
+                        <option value="">Оберіть фрукт</option>
+                    </select>
+                </label>
+                <div class="mini-product-list" id="fruitList" style="margin-top:14px;"></div>
+            </div>
+            <div class="promo-card tertiary">
+                <div class="promo-badge">Натурально</div>
+                <label style="display:flex; flex-direction:column; gap:10px; font-size:0.9rem; font-weight:700; color: var(--text);">
+                    Овочі
+                    <select id="vegetableSelect" style="padding:12px 14px; border-radius:12px; border:1px solid rgba(148,163,184,0.25); background:#fff; font-size:1rem;">
+                        <option value="">Оберіть овоч</option>
+                    </select>
+                </label>
+                <div class="mini-product-list" id="vegetableList" style="margin-top:14px;"></div>
+            </div>
+        </div>
+
+        <div class="filter-panel">
+            <label>
+                Категорія
+                <div class="select-wrap">
+                    <select id="categoryFilter">
+                        <option value="all">Усі товари</option>
+                        <option value="Фрукти">Фрукти</option>
+                        <option value="Овочі">Овочі</option>
+                        <option value="Молочні">Молочні</option>
+                        <option value="М'ясо">М'ясо</option>
+                        <option value="Хлібобулочні">Хлібобулочні</option>
+                        <option value="Напої">Напої</option>
+                        <option value="Риба">Риба</option>
+                    </select>
+                </div>
+            </label>
+            <label>
+                Тип прийому їжі
+                <div class="select-wrap">
+                    <select id="mealFilter">
+                        <option value="all">Усі</option>
+                        <option value="сніданок">Сніданок</option>
+                        <option value="обід">Обід</option>
+                        <option value="вечеря">Вечеря</option>
+                        <option value="пікнік">Пікнік</option>
+                    </select>
+                </div>
+            </label>
+        </div>
+
+        <div class="assistant-box">
+            <div class="assistant-header">
+                <h3>AI помічник</h3>
+                <span class="chip">Онлайн</span>
+            </div>
+
+            <div class="input-wrap">
+                <textarea id="message" aria-label="Запит до AI">Підбери продукти для сніданку до 350 грн</textarea>
+                <button id="sendBtn" class="send-btn">Запитати</button>
+            </div>
+
+            <div class="result-box" id="resultBox"></div>
+        </div>
+    </div>
+
+    <script>
+        const messageInput = document.getElementById('message');
+        const sendBtn = document.getElementById('sendBtn');
+        const resultBox = document.getElementById('resultBox');
+        const categoryFilter = document.getElementById('categoryFilter');
+        const mealFilter = document.getElementById('mealFilter');
+        const fruitList = document.getElementById('fruitList');
+        const vegetableList = document.getElementById('vegetableList');
+        const fruitSelect = document.getElementById('fruitSelect');
+        const vegetableSelect = document.getElementById('vegetableSelect');
+
+        let allProducts = [];
+
+        const fallbackImages = {
+            'Яйця': 'https://vip.shuvar.com/pub/media/catalog/product/_/3/_3.jpg',
+            'Огірки': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0Z6lZm5_1JDzXO894hjTQM5HR6Om1aCuvi3uGDg2XAg&s=10',
+            'Буряк': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQxaCo9Jn3FkRJTsEEImyrWABwfO6SuFPye1h-XcgPG4Q&s=10',
+            'Свинина': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTg2ZGLUx2iCJADwY9SRzuX_dwloM_QlQ4Tyx11mcwgoA&s=10',
+            'Груша': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHopj8mv3y5LiGrCV-tufiPCsflDj78H73ZByP2x9A_w&s',
+            'Куряче філе': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRvDp1l1CoLJXCl4nV8QwJuCBQJPo_T78QU9_guUehG0g&s',
+            'Куряче филе': 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRvDp1l1CoLJXCl4nV8QwJuCBQJPo_T78QU9_guUehG0g&s'
+        };
+
+        const getProductImageUrl = (item) => {
+            const name = item?.name?.trim() || item?.Name?.trim();
+            return fallbackImages[name] || item?.imageUrl || item?.ImageUrl || 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';
+        };
+
+        const renderSelectedCategory = (categoryName, selectElement, target) => {
+            const selectedValue = selectElement.value;
+            const items = allProducts.filter(product => (product.category || product.Category) === categoryName);
+            const chosen = items.find(product => (product.name || product.Name) === selectedValue);
+
+            if (!chosen) {
+                target.innerHTML = '<div class="mini-product-item"><div class="name">Оберіть товар</div></div>';
+                return;
+            }
+
+            target.innerHTML = `
+                <div class="mini-product-item">
+                    <img src="${getProductImageUrl(chosen)}" alt="${chosen.name || chosen.Name}" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';" />
+                    <div class="name">${chosen.name || chosen.Name}</div>
+                    <div class="price">${chosen.price || chosen.Price} грн</div>
+                </div>
+            `;
+        };
+
+        const populateSelectOptions = () => {
+            const fruits = allProducts.filter(product => (product.category || product.Category) === 'Фрукти');
+            const vegetables = allProducts.filter(product => (product.category || product.Category) === 'Овочі');
+
+            fruitSelect.innerHTML = '<option value="">Оберіть фрукт</option>' + fruits.map(product => `
+                <option value="${product.name || product.Name}">${product.name || product.Name}</option>
+            `).join('');
+
+            vegetableSelect.innerHTML = '<option value="">Оберіть овоч</option>' + vegetables.map(product => `
+                <option value="${product.name || product.Name}">${product.name || product.Name}</option>
+            `).join('');
+
+            fruitList.innerHTML = '<div class="mini-product-item"><div class="name">Оберіть фрукт</div></div>';
+            vegetableList.innerHTML = '<div class="mini-product-item"><div class="name">Оберіть овоч</div></div>';
+
+            categoryFilter.value = 'all';
+            mealFilter.value = 'all';
+            updateFilteredProducts();
+        };
+
+        const updateFilteredProducts = () => {
+            const selectedCategory = categoryFilter.value;
+            const selectedMeal = mealFilter.value;
+
+            let filtered = [...allProducts];
+
+            if (selectedCategory !== 'all') {
+                filtered = filtered.filter(product => (product.category || product.Category) === selectedCategory);
+            }
+
+            if (selectedMeal !== 'all') {
+                const mealMap = {
+                    'сніданок': ['Яйця', 'Молоко', 'Хліб', 'Йогурт', 'Яблука', 'Банани', 'Сир', 'Огірки'],
+                    'обід': ['Куряче філе', 'Огірки', 'Помідори', 'Картопля', 'Яблука', 'Сметана', 'Яловичина'],
+                    'вечеря': ['Лосось', 'Куряче філе', 'Картопля', 'Капуста', 'Яблука', 'Груша', 'Молоко'],
+                    'пікнік': ['Хліб', 'Банани', 'Яблука', 'Вода', 'Йогурт', 'Сир', 'Огірки', 'Яйця']
+                };
+                const names = mealMap[selectedMeal] || [];
+                filtered = filtered.filter(product => names.includes(product.name || product.Name));
+            }
+
+            if (!filtered.length) {
+                resultBox.innerHTML = '<h4>Товари не знайдено</h4><div class="meta">Спробуйте іншу категорію або тип прийому їжі.</div>';
+                return;
+            }
+
+            if (selectedCategory === 'all' && selectedMeal === 'all') {
+                resultBox.innerHTML = `
+                    <h4>Усі товари</h4>
+                    <div class="meta">Показано всі доступні товари</div>
+                    <div class="product-grid">
+                        ${filtered.map(item => `
+                            <div class="product-card">
+                                <img src="${getProductImageUrl(item)}" alt="${item.name || item.Name}" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';" />
+                                <div class="product-info">
+                                    <div class="product-name">${item.name || item.Name}</div>
+                                    <div class="product-details"><span>${item.category || item.Category}</span><strong>${item.price || item.Price} грн</strong></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                return;
+            }
+
+            resultBox.innerHTML = `
+                <h4>${selectedCategory === 'all' ? 'Усі товари' : selectedCategory}</h4>
+                <div class="meta">${selectedMeal === 'all' ? 'Показано всі товари' : `Тип прийому їжі: ${selectedMeal}`}</div>
+                <div class="product-grid">
+                    ${filtered.map(item => `
+                        <div class="product-card">
+                            <img src="${getProductImageUrl(item)}" alt="${item.name || item.Name}" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';" />
+                            <div class="product-info">
+                                <div class="product-name">${item.name || item.Name}</div>
+                                <div class="product-details"><span>${item.category || item.Category}</span><strong>${item.price || item.Price} грн</strong></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        };
+
+        const loadProducts = async () => {
+            try {
+                const response = await fetch('/api/assistant/products');
+                if (!response.ok) {
+                    throw new Error('Не вдалося завантажити товари');
+                }
+
+                allProducts = await response.json();
+                populateSelectOptions();
+            } catch (error) {
+                resultBox.innerHTML = `<h4>Помилка завантаження товарів</h4><div class="meta">${error.message}</div>`;
+            }
+        };
+
+        const updateAssistantMessageFromFilters = () => {
+            const category = categoryFilter.value;
+            const meal = mealFilter.value;
+
+            if (category === 'all' && meal === 'all') {
+                messageInput.value = 'Підбери продукти для сніданку до 350 грн';
+                return;
+            }
+
+            const categoryText = category === 'all' ? 'продукти' : `продукти категорії ${category}`;
+            const mealText = meal === 'all' ? 'для повсякденного меню' : `для ${meal}`;
+            messageInput.value = `Підбери ${categoryText} ${mealText} до 350 грн`;
+        };
+
+        fruitSelect.addEventListener('change', () => renderSelectedCategory('Фрукти', fruitSelect, fruitList));
+        vegetableSelect.addEventListener('change', () => renderSelectedCategory('Овочі', vegetableSelect, vegetableList));
+
+        categoryFilter.addEventListener('change', () => {
+            updateAssistantMessageFromFilters();
+            updateFilteredProducts();
+        });
+
+        mealFilter.addEventListener('change', () => {
+            updateAssistantMessageFromFilters();
+            updateFilteredProducts();
+        });
+
+        sendBtn.addEventListener('click', async () => {
+            const message = messageInput.value.trim();
+            if (!message) {
+                resultBox.innerHTML = '<h4>Спочатку введіть запит.</h4>';
+                return;
+            }
+
+            resultBox.innerHTML = '<h4>Підбираю товари...</h4>';
+
+            try {
+                const response = await fetch('/api/assistant', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.message || 'Помилка запиту');
+                }
+
+                const items = data.items || [];
+                const total = data.totalPrice ?? 0;
+                const budget = data.budget ?? 0;
+
+                resultBox.innerHTML = `
+                    <h4>${data.message}</h4>
+                    <div class="meta">Бюджет: ${budget} грн</div>
+                    <div class="meta">Загальна сума: ${total} грн</div>
+                    <div class="product-grid">
+                        ${items.map(item => `
+                            <div class="product-card">
+                                <img src="${getProductImageUrl(item)}" alt="${item.name}" onerror="this.onerror=null;this.src='https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';" />
+                                <div class="product-info">
+                                    <div class="product-name">${item.name}</div>
+                                    <div class="product-details"><span>× ${item.quantity}</span><strong>${item.total} грн</strong></div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="total-row"><span>Разом</span><span>${total} грн</span></div>
+                `;
+            } catch (error) {
+                resultBox.innerHTML = `<h4>Помилка</h4><div class="meta">${error.message}</div>`;
+            }
+        });
+
+        loadProducts();
+    </script>
+</body>
+</html>
