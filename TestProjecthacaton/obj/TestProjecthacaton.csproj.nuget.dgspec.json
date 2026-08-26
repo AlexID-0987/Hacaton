@@ -58,6 +58,10 @@
               "target": "Package",
               "version": "[9.0.8, )"
             },
+            "ModelContextProtocol": {
+              "target": "Package",
+              "version": "[2.2.0, )"
+            },
             "NUnit3TestAdapter": {
               "target": "Package",
               "version": "[5.0.0, )"
