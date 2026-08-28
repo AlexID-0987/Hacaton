@@ -223,85 +223,47 @@ public class SilpoAuthController : ControllerBase
     }
     [HttpGet("delivery")]
     public async Task<IActionResult> GetDelivery(
-    [FromQuery] string address,
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
+    [FromQuery] double latitude,
+    [FromQuery] double longitude,
+    [FromServices] SilpoMcpService silpoMcpService)
     {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
+        if (string.IsNullOrWhiteSpace(_tokenStore.AccessToken))
         {
             return Unauthorized(
                 "Спочатку авторизуйтесь через /api/silpo/login");
         }
 
-       
-        var addressResult = await silpoMcpService.FindAddressAsync(
-            tokenStore.AccessToken,
-            address);
-
-        var jsonStart = addressResult.IndexOf('{');
-
-        if (jsonStart < 0)
+        if (latitude == 0 || longitude == 0)
         {
-            return BadRequest(addressResult);
+            return BadRequest(
+                "Не вказано координати адреси.");
         }
 
-        var addressJson = addressResult[jsonStart..];
-
-        using var addressDocument =
-            JsonDocument.Parse(addressJson);
-
-        var root = addressDocument.RootElement;
-
-        if (!root.TryGetProperty("result", out var result))
+        try
         {
-            return BadRequest(addressResult);
+            var deliveryResult =
+                await silpoMcpService.GetAvailableDeliveryTypesAsync(
+                    _tokenStore.AccessToken,
+                    latitude,
+                    longitude);
+
+            return Content(
+                deliveryResult,
+                "application/json");
         }
-
-        
-        var content = result.GetProperty("content");
-
-        if (content.GetArrayLength() == 0)
+        catch (Exception ex)
         {
-            return BadRequest("Адресу не знайдено.");
+            return StatusCode(
+                500,
+                new
+                {
+                    message = "Помилка отримання способів доставки.",
+                    error = ex.Message
+                });
         }
-
-        var text = content[0].GetProperty("text").GetString();
-
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return BadRequest("Порожня відповідь від Silpo MCP.");
-        }
-
-        using var addressData =
-            JsonDocument.Parse(text);
-
-        var addressRoot = addressData.RootElement;
-
-        if (!addressRoot.TryGetProperty("addresses", out var addresses) ||
-            addresses.GetArrayLength() == 0)
-        {
-            return NotFound("Адресу не знайдено.");
-        }
-
-        
-        var selectedAddress = addresses[0];
-
-        var latitude =
-            selectedAddress.GetProperty("latitude").GetDouble();
-
-        var longitude =
-            selectedAddress.GetProperty("longitude").GetDouble();
-
-        
-        var deliveryResult =
-            await silpoMcpService.GetAvailableDeliveryTypesAsync(
-                tokenStore.AccessToken,
-                latitude,
-                longitude);
-
-        return Content(deliveryResult, "application/json");
     }
     [HttpGet("time-slots")]
+    [HttpGet("timeslots")]
     public async Task<IActionResult> GetTimeSlots(
     [FromQuery] string branchId,
     [FromQuery] string deliveryType,
@@ -316,12 +278,12 @@ public class SilpoAuthController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(branchId))
         {
-            return BadRequest("branchId є обов'язковим.");
+            return BadRequest("Не вказано branchId.");
         }
 
         if (string.IsNullOrWhiteSpace(deliveryType))
         {
-            return BadRequest("deliveryType є обов'язковим.");
+            return BadRequest("Не вказано deliveryType.");
         }
 
         var result = await silpoMcpService.GetTimeSlotsAsync(

@@ -152,20 +152,130 @@ public class SilpoMcpService
             });
     }
 
-    public Task<string> GetTimeSlotsAsync(
-        string accessToken,
-        string branchId,
-        string deliveryType)
+    public async Task<string> GetTimeSlotsAsync(
+    string accessToken,
+    string branchId,
+    string deliveryType)
     {
-        return CallToolAsync(
-            accessToken,
-            6,
-            "silpo_get_time_slots",
+        _httpClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", accessToken);
+
+        var request = new
+        {
+            jsonrpc = "2.0",
+            id = 6,
+            method = "tools/call",
+            @params = new
+            {
+                name = "silpo_get_time_slots",
+                arguments = new
+                {
+                    branchId,
+                    deliveryTypes = new[] { deliveryType },
+                    limit = 20
+                }
+            }
+        };
+
+        var json = JsonSerializer.Serialize(request);
+
+        using var content = new StringContent(
+            json,
+            Encoding.UTF8,
+            "application/json");
+
+        var response = await _httpClient.PostAsync(
+            "https://mcp.silpo.ua/mcp",
+            content);
+
+        var responseBody =
+            await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return $"HTTP {(int)response.StatusCode}\n{responseBody}";
+        }
+
+        using var document =
+            JsonDocument.Parse(responseBody);
+
+        var text = document.RootElement
+            .GetProperty("result")
+            .GetProperty("content")[0]
+            .GetProperty("text")
+            .GetString();
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Порожня відповідь від Silpo MCP."
+            });
+        }
+
+        using var slotsDocument =
+            JsonDocument.Parse(text);
+
+        var slots = slotsDocument.RootElement
+            .GetProperty("slots");
+
+        var kyivTimeZone =
+            TimeZoneInfo.FindSystemTimeZoneById("FLE Standard Time");
+
+        var availableSlots = new List<object>();
+
+        foreach (var slot in slots.EnumerateArray())
+        {
+            if (!slot.GetProperty("available").GetBoolean())
+                continue;
+
+            var startUtc =
+                DateTimeOffset.Parse(
+                    slot.GetProperty("start").GetString()!);
+
+            var endUtc =
+                DateTimeOffset.Parse(
+                    slot.GetProperty("end").GetString()!);
+
+            var startKyiv =
+                TimeZoneInfo.ConvertTime(
+                    startUtc,
+                    kyivTimeZone);
+
+            var endKyiv =
+                TimeZoneInfo.ConvertTime(
+                    endUtc,
+                    kyivTimeZone);
+
+            availableSlots.Add(new
+            {
+                date = startKyiv.ToString("dd.MM.yyyy"),
+                start = startKyiv.ToString("HH:mm"),
+                end = endKyiv.ToString("HH:mm"),
+                time = $"{startKyiv:HH:mm}–{endKyiv:HH:mm}",
+                deliveryType = slot
+                    .GetProperty("deliveryType")
+                    .GetString(),
+                deliveryCost = slot
+                    .GetProperty("deliveryCost")
+                    .GetDecimal(),
+                minOrderCost = slot
+                    .GetProperty("minOrderCost")
+                    .GetDecimal()
+            });
+        }
+
+        return JsonSerializer.Serialize(
             new
             {
-                branchId,
-                deliveryTypes = new[] { deliveryType },
-                limit = 10
+                success = true,
+                total = availableSlots.Count,
+                slots = availableSlots
+            },
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
             });
     }
 
