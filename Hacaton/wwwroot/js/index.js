@@ -1,8 +1,9 @@
-﻿
+﻿// =====================================================
+// ELEMENTS
+// =====================================================
 
 const messageInput = document.getElementById('message');
 const sendBtn = document.getElementById('sendBtn');
-
 const resultBox = document.getElementById('resultBox');
 
 const categoryFilter =
@@ -23,6 +24,8 @@ const fruitList =
 const vegetableList =
     document.getElementById('vegetableList');
 
+const loginBtn =
+    document.getElementById('loginBtn');
 
 // =====================================================
 // STATE
@@ -30,35 +33,15 @@ const vegetableList =
 
 let allProducts = [];
 
+let selectedBranchId = null;
+let selectedDeliveryType = null;
+
+let selectedTimeSlot = null;
+
 
 // =====================================================
-// FALLBACK IMAGES
+// DEFAULT IMAGE
 // =====================================================
-
-const fallbackImages = {
-
-    'Яйця':
-        'https://vip.shuvar.com/pub/media/catalog/product/_/3/_3.jpg',
-
-    'Огірки':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0Z6lZm5_1JDzXO894hjTQM5HR6Om1aCuvi3uGDg2XAg&s=10',
-
-    'Буряк':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQxaCo9Jn3FkRJTsEEImyrWABwfO6SuFPye1h-XcgPG4Q&s=10',
-
-    'Свинина':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTg2ZGLUx2iCJADwY9SRzuX_dwloM_QlQ4Tyx11mcwgoA&s=10',
-
-    'Груша':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSHopj8mv3y5LiGrCV-tufiPCsflDj78H73ZByP2x9A_w&s',
-
-    'Куряче філе':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRvDp1l1CoLJXCl4nV8QwJuCBQJPo_T78QU9_guUehG0g&s',
-
-    'Куряче филе':
-        'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRvDp1l1CoLJXCl4nV8QwJuCBQJPo_T78QU9_guUehG0g&s'
-};
-
 
 const defaultImage =
     'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';
@@ -68,11 +51,24 @@ const defaultImage =
 // HELPERS
 // =====================================================
 
+function escapeHtml(value) {
+
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+
 function getProductName(product) {
 
     return (
         product?.name ??
         product?.Name ??
+        product?.title ??
+        product?.productName ??
         ''
     );
 }
@@ -90,60 +86,79 @@ function getProductCategory(product) {
 
 function getProductPrice(product) {
 
-    return (
+    const price =
         product?.price ??
         product?.Price ??
-        0
-    );
+        product?.currentPrice ??
+        product?.salePrice ??
+        0;
+
+    return Number(price) || 0;
 }
 
 
 function getProductImage(product) {
 
-    const name = getProductName(product).trim();
-
     return (
-        fallbackImages[name] ??
+        product?.image ??
         product?.imageUrl ??
         product?.ImageUrl ??
+        product?.photoUrl ??
+        product?.photo ??
         defaultImage
     );
 }
 
 
+function formatPrice(price) {
+
+    const number =
+        Number(price) || 0;
+
+    return number.toFixed(2);
+}
+
+
 // =====================================================
-// PRODUCT CARD
+// LOCAL PRODUCT CARD
 // =====================================================
 
 function createProductCard(product) {
 
-    const name = getProductName(product);
-    const category = getProductCategory(product);
-    const price = getProductPrice(product);
-    const image = getProductImage(product);
+    const name =
+        getProductName(product);
+
+    const category =
+        getProductCategory(product);
+
+    const price =
+        getProductPrice(product);
+
+    const image =
+        getProductImage(product);
 
     return `
-    < article class="product-card" >
+        <article class="product-card">
 
-        <img
-            src="${image}"
-            alt="${name}"
-            onerror="this.onerror=null;this.src='${defaultImage}'">
+            <img
+                src="${escapeHtml(image)}"
+                alt="${escapeHtml(name)}"
+                onerror="this.onerror=null;this.src='${defaultImage}'">
 
             <div class="product-info">
 
                 <div class="product-name">
-                    ${name}
+                    ${escapeHtml(name)}
                 </div>
 
                 <div class="product-details">
 
                     <span>
-                        ${category}
+                        ${escapeHtml(category)}
                     </span>
 
                     <strong>
-                        ${price} грн
+                        ${formatPrice(price)} грн
                     </strong>
 
                 </div>
@@ -151,48 +166,463 @@ function createProductCard(product) {
             </div>
 
         </article>
-`;
+    `;
 }
 
 
 // =====================================================
-// RENDER PRODUCTS
+// SILPO PRODUCT CARD
 // =====================================================
 
-function renderProducts(products, title, subtitle) {
+function createSilpoProductCard(product) {
 
-    if (!products.length) {
+    const name =
+        product?.name ??
+        product?.title ??
+        product?.productName ??
+        'Товар Silpo';
 
-        resultBox.innerHTML = `
-    <h3> Товари не знайдено</h3>
+    const price =
+        product?.price ??
+        product?.currentPrice ??
+        product?.salePrice ??
+        0;
 
-        <div class="meta">
-            Спробуйте іншу категорію або тип прийому їжі.
-        </div>
-`;
+    const oldPrice =
+        product?.oldPrice;
+
+    const image =
+        product?.image ??
+        product?.imageUrl ??
+        product?.photoUrl ??
+        product?.photo ??
+        defaultImage;
+
+    const stock =
+        product?.stock ?? 0;
+
+    const available =
+        product?.available !== false;
+
+    const displayRatio =
+        product?.displayRatio ?? '';
+
+    const specialPrices =
+        product?.specialPrices ?? [];
+
+    let specialPriceHtml = '';
+
+    if (
+        Array.isArray(specialPrices) &&
+        specialPrices.length > 0
+    ) {
+
+        const special =
+            specialPrices[0];
+
+        if (special?.price != null) {
+
+            specialPriceHtml = `
+                <div class="meta">
+                    Акційна ціна від
+                    ${formatPrice(special.price)} грн
+                    ${special.count ? `від ${special.count} шт.` : ''}
+                </div>
+            `;
+        }
+    }
+
+    return `
+        <article class="product-card">
+
+            <img
+                src="${escapeHtml(image)}"
+                alt="${escapeHtml(name)}"
+                onerror="this.onerror=null;this.src='${defaultImage}'">
+
+            <div class="product-info">
+
+                <div class="product-name">
+                    ${escapeHtml(name)}
+                </div>
+
+                ${displayRatio
+            ? `
+                            <div class="meta">
+                                ${escapeHtml(displayRatio)}
+                            </div>
+                          `
+            : ''
+        }
+
+                <div class="product-details">
+
+                    <span>
+                        ${available
+            ? `В наявності: ${stock}`
+            : 'Немає в наявності'
+        }
+                    </span>
+
+                    <strong>
+                        ${formatPrice(price)} грн
+                    </strong>
+
+                </div>
+
+                ${oldPrice != null
+            ? `
+                            <div class="meta">
+                                Стара ціна:
+                                ${formatPrice(oldPrice)} грн
+                            </div>
+                          `
+            : ''
+        }
+
+                ${specialPriceHtml}
+
+            </div>
+
+        </article>
+    `;
+}
+
+
+// =====================================================
+// PARSE SILPO MCP RESPONSE
+// =====================================================
+
+function parseSilpoProducts(mcpResponse) {
+
+    try {
+
+        /*
+         * Наш backend вже повертає:
+         *
+         * {
+         *   success: true,
+         *   result: {
+         *      success: true,
+         *      summary: "...",
+         *      queries: [
+         *          {
+         *              query: "Молоко",
+         *              totalFound: 62,
+         *              products: [...]
+         *          }
+         *      ]
+         *   }
+         * }
+         */
+
+        const result =
+            mcpResponse?.result;
+
+        if (!result) {
+
+            console.warn(
+                'У відповіді немає result:',
+                mcpResponse
+            );
+
+            return [];
+        }
+
+
+        // =============================================
+        // НОВИЙ ФОРМАТ
+        // =============================================
+
+        if (Array.isArray(result.queries)) {
+
+            const products = [];
+
+            for (const query of result.queries) {
+
+                if (
+                    Array.isArray(query.products)
+                ) {
+
+                    products.push(
+                        ...query.products
+                    );
+                }
+            }
+
+            return products;
+        }
+
+
+        // =============================================
+        // Якщо backend повернув старий MCP формат
+        // =============================================
+
+        if (
+            result.content &&
+            Array.isArray(result.content) &&
+            result.content.length > 0
+        ) {
+
+            const text =
+                result.content[0]?.text;
+
+            if (text) {
+
+                const data =
+                    typeof text === 'string'
+                        ? JSON.parse(text)
+                        : text;
+
+                if (Array.isArray(data)) {
+                    return data;
+                }
+
+                if (Array.isArray(data.products)) {
+                    return data.products;
+                }
+
+                if (Array.isArray(data.items)) {
+                    return data.items;
+                }
+
+                if (Array.isArray(data.results)) {
+                    return data.results;
+                }
+            }
+        }
+
+
+        // =============================================
+        // Якщо result сам є масивом
+        // =============================================
+
+        if (Array.isArray(result)) {
+            return result;
+        }
+
+
+        // =============================================
+        // Інші можливі формати
+        // =============================================
+
+        if (Array.isArray(result.products)) {
+            return result.products;
+        }
+
+        if (Array.isArray(result.items)) {
+            return result.items;
+        }
+
+        if (Array.isArray(result.results)) {
+            return result.results;
+        }
+
+
+        console.warn(
+            'Не знайдено масив товарів Silpo:',
+            mcpResponse
+        );
+
+        return [];
+
+    }
+    catch (error) {
+
+        console.error(
+            'Помилка розбору Silpo MCP:',
+            error
+        );
+
+        return [];
+    }
+}
+
+
+// =====================================================
+// RENDER SILPO PRODUCTS
+// =====================================================
+
+function renderSilpoProducts(products, title = 'Товари Silpo') {
+
+    if (!Array.isArray(products)) {
+        products = [];
+    }
+
+
+    if (products.length === 0) {
+
+        resultBox.innerHTML += `
+            <div class="result-box">
+
+                <h3>
+                    Товари Silpo не знайдено
+                </h3>
+
+                <div class="meta">
+                    Спробуйте змінити запит.
+                </div>
+
+            </div>
+        `;
 
         return;
     }
 
 
-    resultBox.innerHTML = `
+    resultBox.innerHTML += `
 
-    <h3>
-    ${ title }
-        </h3>
+        <div class="result-box">
 
-        <div class="meta">
-            ${subtitle}
+            <h3>
+                ${escapeHtml(title)}
+            </h3>
+
+            <div class="meta">
+                Знайдено товарів:
+                ${products.length}
+            </div>
+
+            <div class="product-grid">
+
+                ${products
+            .slice(0, 30)
+            .map(createSilpoProductCard)
+            .join('')}
+
+            </div>
+
         </div>
+    `;
+}
 
-        <div class="product-grid">
 
-            ${products
-                .map(createProductCard)
-                .join('')}
+// =====================================================
+// GET SILPO PRODUCTS
+// =====================================================
 
-        </div>
-`;
+async function loadSilpoProducts(productNames) {
+
+    if (
+        !Array.isArray(productNames) ||
+        productNames.length === 0
+    ) {
+        return;
+    }
+
+
+    try {
+
+        resultBox.innerHTML += `
+            <div class="meta">
+                ⏳ Шукаю актуальні товари Silpo...
+            </div>
+        `;
+
+
+        /*
+         * Максимум 30 товарів,
+         * як дозволяє наш backend.
+         */
+
+        const names =
+            productNames
+                .filter(x => x && String(x).trim())
+                .slice(0, 30);
+
+
+        if (!names.length) {
+            return;
+        }
+
+
+        const query =
+            names
+                .map(name =>
+                    `products=${encodeURIComponent(name)}`
+                )
+                .join('&');
+
+
+        const response =
+            await fetch(
+                `/api/silpo/products?${query}`
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data?.message ??
+                data?.error ??
+                'Помилка отримання товарів Silpo'
+            );
+        }
+
+
+        const products =
+            parseSilpoProducts(data);
+
+
+        /*
+         * Прибираємо повідомлення
+         * "Шукаю актуальні товари..."
+         */
+
+        const temporaryMessages =
+            resultBox.querySelectorAll(
+                '.meta'
+            );
+
+        if (temporaryMessages.length > 0) {
+
+            const last =
+                temporaryMessages[
+                temporaryMessages.length - 1
+                ];
+
+            if (
+                last.textContent.includes(
+                    'Шукаю актуальні товари Silpo'
+                )
+            ) {
+                last.remove();
+            }
+        }
+
+
+        renderSilpoProducts(
+            products,
+            '🛒 Актуальні товари Silpo'
+        );
+
+    }
+    catch (error) {
+
+        console.error(
+            'Silpo products error:',
+            error
+        );
+
+        resultBox.innerHTML += `
+
+            <div class="meta">
+
+                <strong>
+                    Не вдалося отримати товари Silpo
+                </strong>
+
+                <br>
+
+                ${escapeHtml(error.message)}
+
+            </div>
+        `;
+    }
 }
 
 
@@ -247,6 +677,55 @@ const mealMap = {
 
 
 // =====================================================
+// RENDER LOCAL PRODUCTS
+// =====================================================
+
+function renderProducts(
+    products,
+    title,
+    subtitle
+) {
+
+    if (!products.length) {
+
+        resultBox.innerHTML = `
+
+            <h3>
+                Товари не знайдено
+            </h3>
+
+            <div class="meta">
+                Спробуйте іншу категорію
+                або тип прийому їжі.
+            </div>
+        `;
+
+        return;
+    }
+
+
+    resultBox.innerHTML = `
+
+        <h3>
+            ${escapeHtml(title)}
+        </h3>
+
+        <div class="meta">
+            ${escapeHtml(subtitle)}
+        </div>
+
+        <div class="product-grid">
+
+            ${products
+            .map(createProductCard)
+            .join('')}
+
+        </div>
+    `;
+}
+
+
+// =====================================================
 // FILTER PRODUCTS
 // =====================================================
 
@@ -265,10 +744,11 @@ function updateFilteredProducts() {
 
     if (category !== 'all') {
 
-        filtered = filtered.filter(
-            product =>
-                getProductCategory(product) === category
-        );
+        filtered =
+            filtered.filter(
+                product =>
+                    getProductCategory(product) === category
+            );
     }
 
 
@@ -277,12 +757,14 @@ function updateFilteredProducts() {
         const allowedNames =
             mealMap[meal] ?? [];
 
-        filtered = filtered.filter(
-            product =>
-                allowedNames.includes(
-                    getProductName(product)
-                )
-        );
+
+        filtered =
+            filtered.filter(
+                product =>
+                    allowedNames.includes(
+                        getProductName(product)
+                    )
+            );
     }
 
 
@@ -295,7 +777,7 @@ function updateFilteredProducts() {
     const subtitle =
         meal === 'all'
             ? 'Показано всі доступні товари'
-            : `Тип прийому їжі: ${ meal } `;
+            : `Тип прийому їжі: ${meal}`;
 
 
     renderProducts(
@@ -334,17 +816,17 @@ function updateAssistantMessage() {
     const categoryText =
         category === 'all'
             ? 'продукти'
-            : `продукти категорії ${ category } `;
+            : `продукти категорії ${category}`;
 
 
     const mealText =
         meal === 'all'
             ? 'для повсякденного меню'
-            : `для ${ meal } `;
+            : `для ${meal}`;
 
 
     messageInput.value =
-        `Підбери ${ categoryText } ${ mealText } до 350 грн`;
+        `Підбери ${categoryText} ${mealText} до 350 грн`;
 }
 
 
@@ -379,12 +861,14 @@ function renderSelectedProduct(
     if (!product) {
 
         target.innerHTML = `
-    <div class="mini-product-item">
-        <div class="name">
-            Оберіть товар
-        </div>
+            <div class="mini-product-item">
+
+                <div class="name">
+                    Оберіть товар
+                </div>
+
             </div>
-    `;
+        `;
 
         return;
     }
@@ -392,22 +876,30 @@ function renderSelectedProduct(
 
     target.innerHTML = `
 
-    < div class="mini-product-item" >
+        <div class="mini-product-item">
 
-        <img
-            src="${getProductImage(product)}"
-            alt="${getProductName(product)}">
+            <img
+                src="${escapeHtml(
+        getProductImage(product)
+    )}"
+                alt="${escapeHtml(
+        getProductName(product)
+    )}">
 
             <div class="name">
-                ${getProductName(product)}
+                ${escapeHtml(
+        getProductName(product)
+    )}
             </div>
 
             <div class="price">
-                ${getProductPrice(product)} грн
+                ${formatPrice(
+        getProductPrice(product)
+    )} грн
             </div>
 
         </div>
-`;
+    `;
 }
 
 
@@ -432,30 +924,50 @@ function populateProductSelects() {
 
 
     fruitSelect.innerHTML =
-        `<option value = ""> Оберіть фрукти</option> ` +
+        `
+        <option value="">
+            Оберіть фрукти
+        </option>
+        ` +
         fruits
-            .map(product =>
-                `<option value = "${getProductName(product)}">
-    ${ getProductName(product) }
-                </option> `
-            )
+            .map(product => {
+
+                const name =
+                    getProductName(product);
+
+                return `
+                    <option value="${escapeHtml(name)}">
+                        ${escapeHtml(name)}
+                    </option>
+                `;
+            })
             .join('');
 
 
     vegetableSelect.innerHTML =
-        `< option value = "" > Оберіть овочі</option > ` +
+        `
+        <option value="">
+            Оберіть овочі
+        </option>
+        ` +
         vegetables
-            .map(product =>
-                `< option value = "${getProductName(product)}" >
-    ${ getProductName(product) }
-                </option > `
-            )
+            .map(product => {
+
+                const name =
+                    getProductName(product);
+
+                return `
+                    <option value="${escapeHtml(name)}">
+                        ${escapeHtml(name)}
+                    </option>
+                `;
+            })
             .join('');
 }
 
 
 // =====================================================
-// LOAD PRODUCTS
+// LOAD LOCAL PRODUCTS
 // =====================================================
 
 async function loadProducts() {
@@ -463,7 +975,9 @@ async function loadProducts() {
     try {
 
         const response =
-            await fetch('/api/assistant/products');
+            await fetch(
+                '/api/assistant/products'
+            );
 
 
         if (!response.ok) {
@@ -487,14 +1001,14 @@ async function loadProducts() {
 
         resultBox.innerHTML = `
 
-    <h3>
-    Помилка завантаження товарів
+            <h3>
+                Помилка завантаження товарів
             </h3>
 
-    <div class="meta">
-        ${error.message}
-    </div>
-`;
+            <div class="meta">
+                ${escapeHtml(error.message)}
+            </div>
+        `;
     }
 }
 
@@ -511,20 +1025,22 @@ async function askAssistant() {
 
     if (!message) {
 
-        resultBox.innerHTML = `
-    <h3>
-    Спочатку введіть запит.
-            </h3>
-    `;
+        resultBox.innerHTML =
+            '<h3>Спочатку введіть запит.</h3>';
 
         return;
     }
 
 
     resultBox.innerHTML = `
-    <h3>
-    Підбираю товари...
+
+        <h3>
+            🤖 Підбираю товари...
         </h3>
+
+        <div class="meta">
+            AI аналізує ваш запит.
+        </div>
     `;
 
 
@@ -533,20 +1049,26 @@ async function askAssistant() {
 
     try {
 
+        // =============================================
+        // 1. AI
+        // =============================================
+
         const response =
-            await fetch('/api/assistant', {
+            await fetch(
+                '/api/assistant',
+                {
+                    method: 'POST',
 
-                method: 'POST',
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
 
-                headers: {
-                    'Content-Type':
-                        'application/json'
-                },
-
-                body: JSON.stringify({
-                    message
-                })
-            });
+                    body: JSON.stringify({
+                        message
+                    })
+                }
+            );
 
 
         const data =
@@ -556,29 +1078,79 @@ async function askAssistant() {
         if (!response.ok) {
 
             throw new Error(
-                data.message ||
-                'Помилка запиту'
+                data?.message ??
+                data?.error ??
+                'Помилка запиту AI'
             );
         }
 
 
+        // =============================================
+        // 2. Показуємо результат AI
+        // =============================================
+
         renderAssistantResult(data);
+
+
+        // =============================================
+        // 3. Визначаємо назви товарів
+        // =============================================
+
+        const items =
+            Array.isArray(data.items)
+                ? data.items
+                : [];
+
+
+        const productNames =
+            items
+                .map(item =>
+                    item?.name
+                )
+                .filter(name =>
+                    name &&
+                    String(name).trim()
+                );
+
+
+        // =============================================
+        // 4. Шукаємо актуальні товари Silpo
+        // =============================================
+
+        if (productNames.length > 0) {
+
+            await loadSilpoProducts(
+                productNames
+            );
+        }
+
+
+        // =============================================
+        // 5. Завантажуємо доставку
+        // =============================================
+
         await loadDeliveryOptions();
 
     }
     catch (error) {
 
+        console.error(
+            'AI error:',
+            error
+        );
+
+
         resultBox.innerHTML = `
 
-    <h3>
-    Помилка
+            <h3>
+                ❌ Помилка
             </h3>
 
-    <div class="meta">
-        ${error.message}
-    </div>
-`;
+            <div class="meta">
+                ${escapeHtml(error.message)}
+            </div>
 
+        `;
     }
     finally {
 
@@ -594,67 +1166,116 @@ async function askAssistant() {
 function renderAssistantResult(data) {
 
     const items =
-        data.items ?? [];
+        Array.isArray(data.items)
+            ? data.items
+            : [];
+
 
     const total =
-        data.totalPrice ?? 0;
+        Number(data.totalPrice) || 0;
+
 
     const budget =
-        data.budget ?? 0;
+        Number(data.budget) || 0;
+
+
+    const remaining =
+        budget - total;
 
 
     resultBox.innerHTML = `
 
-    <h3>
-    ${ data.message ?? 'Результат' }
+        <h3>
+            ${escapeHtml(
+        data.message ??
+        'Результат AI'
+    )}
         </h3>
 
         <div class="meta">
-            Бюджет: ${budget} грн
+            💰 Бюджет:
+            <strong>
+                ${formatPrice(budget)} грн
+            </strong>
         </div>
 
         <div class="meta">
-            Загальна сума: ${total} грн
+            🛒 Загальна сума:
+            <strong>
+                ${formatPrice(total)} грн
+            </strong>
         </div>
+
+        <div class="meta">
+            ${remaining >= 0
+            ? `Залишилось:
+                       ${formatPrice(remaining)} грн`
+            : `Перевищення бюджету:
+                       ${formatPrice(
+                Math.abs(remaining)
+            )} грн`
+        }
+        </div>
+
 
         <div class="product-grid">
 
             ${items
-                .map(item => `
+            .map(item => {
 
-                    <article class="product-card">
+                const name =
+                    item?.name ??
+                    'Товар';
 
-                        <img
-                            src="${getProductImage(item)}"
-                            alt="${item.name}"
-                            onerror="this.onerror=null;this.src='${defaultImage}'">
+                const quantity =
+                    Number(item?.quantity) || 1;
 
-                        <div class="product-info">
+                const itemTotal =
+                    Number(item?.total) || 0;
 
-                            <div class="product-name">
-                                ${item.name}
+                const image =
+                    getProductImage(item);
+
+
+                return `
+
+                        <article class="product-card">
+
+                            <img
+                                src="${escapeHtml(image)}"
+                                alt="${escapeHtml(name)}"
+                                onerror="this.onerror=null;this.src='${defaultImage}'">
+
+                            <div class="product-info">
+
+                                <div class="product-name">
+                                    ${escapeHtml(name)}
+                                </div>
+
+                                <div class="product-details">
+
+                                    <span>
+                                        × ${quantity}
+                                    </span>
+
+                                    <strong>
+                                        ${formatPrice(
+                    itemTotal
+                )} грн
+                                    </strong>
+
+                                </div>
+
                             </div>
 
-                            <div class="product-details">
+                        </article>
 
-                                <span>
-                                    × ${item.quantity}
-                                </span>
-
-                                <strong>
-                                    ${item.total} грн
-                                </strong>
-
-                            </div>
-
-                        </div>
-
-                    </article>
-
-                `)
-                .join('')}
+                    `;
+            })
+            .join('')}
 
         </div>
+
 
         <div class="total-row">
 
@@ -663,11 +1284,429 @@ function renderAssistantResult(data) {
             </span>
 
             <span>
-                ${total} грн
+                ${formatPrice(total)} грн
             </span>
 
         </div>
-`;
+
+    `;
+}
+
+
+// =====================================================
+// DELIVERY
+// =====================================================
+
+async function loadDeliveryOptions() {
+
+    const deliveryBox =
+        document.getElementById(
+            'deliveryBox'
+        );
+
+    const deliveryStatus =
+        document.getElementById(
+            'deliveryStatus'
+        );
+
+    const deliveryOptions =
+        document.getElementById(
+            'deliveryOptions'
+        );
+
+
+    if (!deliveryBox) {
+        return;
+    }
+
+
+    deliveryBox.style.display =
+        'block';
+
+
+    deliveryStatus.textContent =
+        'Завантажую способи доставки...';
+
+
+    deliveryOptions.innerHTML =
+        '';
+
+
+    try {
+
+        const latitude =
+            50.44747065;
+
+        const longitude =
+            30.521505797601343;
+
+
+        const response =
+            await fetch(
+                `/api/silpo/delivery` +
+                `?latitude=${latitude}` +
+                `&longitude=${longitude}`
+            );
+
+
+        if (!response.ok) {
+
+            const text =
+                await response.text();
+
+            throw new Error(
+                text ||
+                'Не вдалося отримати способи доставки'
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        const options =
+            data.options || [];
+
+
+        if (!options.length) {
+
+            deliveryStatus.textContent =
+                'Для цієї адреси доступних способів доставки немає.';
+
+            return;
+        }
+
+
+        deliveryStatus.textContent =
+            `Доступно способів доставки: ${options.length}`;
+
+
+        deliveryOptions.innerHTML =
+            options
+                .map((option, index) => `
+
+                    <button
+                        class="delivery-option"
+                        data-index="${index}"
+                        data-branch-id="${escapeHtml(
+                    option.branchId || ''
+                )}"
+                        data-delivery-type="${escapeHtml(
+                    option.deliveryType || ''
+                )}">
+
+                        <strong>
+                            ${escapeHtml(
+                    getDeliveryName(
+                        option.deliveryType
+                    )
+                )}
+                        </strong>
+
+                        <span>
+                            ${escapeHtml(
+                    option.description || ''
+                )}
+                        </span>
+
+                    </button>
+
+                `)
+                .join('');
+
+
+        document
+            .querySelectorAll(
+                '.delivery-option'
+            )
+            .forEach(button => {
+
+                button.addEventListener(
+                    'click',
+                    async () => {
+
+                        document
+                            .querySelectorAll(
+                                '.delivery-option'
+                            )
+                            .forEach(x =>
+                                x.classList.remove(
+                                    'selected'
+                                )
+                            );
+
+
+                        button.classList.add(
+                            'selected'
+                        );
+
+
+                        selectedBranchId =
+                            button.dataset.branchId ||
+                            null;
+
+
+                        selectedDeliveryType =
+                            button.dataset.deliveryType ||
+                            null;
+
+
+                        if (!selectedBranchId) {
+
+                            document
+                                .getElementById(
+                                    'timeSlotsBox'
+                                )
+                                .style.display =
+                                'none';
+
+
+                            deliveryStatus.textContent =
+                                `${getDeliveryName(
+                                    selectedDeliveryType
+                                )} вибрано.`;
+
+                            return;
+                        }
+
+
+                        await loadTimeSlots(
+                            selectedBranchId,
+                            selectedDeliveryType
+                        );
+                    }
+                );
+            });
+
+    }
+    catch (error) {
+
+        deliveryStatus.innerHTML = `
+
+            <strong>
+                Помилка доставки
+            </strong>
+
+            <br>
+
+            ${escapeHtml(error.message)}
+
+        `;
+    }
+}
+
+
+// =====================================================
+// DELIVERY NAME
+// =====================================================
+
+function getDeliveryName(type) {
+
+    switch (type) {
+
+        case 'DeliveryHome':
+            return '🚚 Доставка додому';
+
+        case 'WideAssortDelivery':
+            return '📦 Доставка широкого асортименту';
+
+        case 'B2B':
+            return '🏢 B2B доставка';
+
+        case 'NovaPoshta':
+            return '📮 Нова Пошта';
+
+        case 'SelfPickup':
+            return '🏪 Самовивіз';
+
+        default:
+            return type || 'Доставка';
+    }
+}
+
+
+// =====================================================
+// TIME SLOTS
+// =====================================================
+
+async function loadTimeSlots(
+    branchId,
+    deliveryType
+) {
+
+    const timeSlotsBox =
+        document.getElementById(
+            'timeSlotsBox'
+        );
+
+    const timeSlots =
+        document.getElementById(
+            'timeSlots'
+        );
+
+
+    timeSlotsBox.style.display =
+        'block';
+
+
+    timeSlots.innerHTML =
+        '<div class="meta">⏳ Завантажую доступний час...</div>';
+
+
+    try {
+
+        const url =
+            `/api/silpo/timeslots` +
+            `?branchId=${encodeURIComponent(
+                branchId
+            )}` +
+            `&deliveryType=${encodeURIComponent(
+                deliveryType
+            )}`;
+
+
+        const response =
+            await fetch(url);
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                await response.text() ||
+                'Не вдалося отримати час доставки'
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        const slots =
+            data.slots || [];
+
+
+        if (!slots.length) {
+
+            timeSlots.innerHTML = `
+
+                <div class="meta">
+                    На найближчий час
+                    доступних слотів немає.
+                </div>
+
+            `;
+
+            return;
+        }
+
+
+        timeSlots.innerHTML =
+            slots
+                .map((slot, index) => `
+
+                    <button
+                        class="time-slot"
+                        data-index="${index}"
+                        data-start="${escapeHtml(
+                    slot.start || ''
+                )}"
+                        data-end="${escapeHtml(
+                    slot.end || ''
+                )}">
+
+                        <strong>
+                            ${escapeHtml(
+                    slot.time || ''
+                )}
+                        </strong>
+
+                        <span>
+                            ${escapeHtml(
+                    slot.date || ''
+                )}
+                        </span>
+
+                        <small>
+                            Доставка:
+                            ${Number(
+                    slot.deliveryCost
+                ) || 0}
+                            грн
+                        </small>
+
+                    </button>
+
+                `)
+                .join('');
+
+
+        document
+            .querySelectorAll(
+                '.time-slot'
+            )
+            .forEach(button => {
+
+                button.addEventListener(
+                    'click',
+                    () => {
+
+                        document
+                            .querySelectorAll(
+                                '.time-slot'
+                            )
+                            .forEach(x =>
+                                x.classList.remove(
+                                    'selected'
+                                )
+                            );
+
+
+                        button.classList.add(
+                            'selected'
+                        );
+
+
+                        selectedTimeSlot = {
+
+                            start:
+                                button.dataset.start,
+
+                            end:
+                                button.dataset.end
+                        };
+
+
+                        console.log(
+                            'Вибраний слот:',
+                            selectedTimeSlot
+                        );
+                    }
+                );
+            });
+
+    }
+    catch (error) {
+
+        timeSlots.innerHTML = `
+
+            <div class="meta">
+
+                <strong>
+                    Помилка
+                </strong>
+
+                <br>
+
+                ${escapeHtml(
+            error.message
+        )}
+
+            </div>
+
+        `;
+    }
 }
 
 
@@ -702,8 +1741,8 @@ categoryFilter.addEventListener(
     () => {
 
         updateAssistantMessage();
-        updateFilteredProducts();
 
+        updateFilteredProducts();
     }
 );
 
@@ -713,258 +1752,10 @@ mealFilter.addEventListener(
     () => {
 
         updateAssistantMessage();
-        updateFilteredProducts();
 
+        updateFilteredProducts();
     }
 );
-
-
-let selectedBranchId = null;
-let selectedDeliveryType = null;
-
-
-// ================================
-// SILPO MCP — способи доставки
-// ================================
-async function loadDeliveryOptions() {
-    const deliveryBox = document.getElementById('deliveryBox');
-    const deliveryStatus = document.getElementById('deliveryStatus');
-    const deliveryOptions = document.getElementById('deliveryOptions');
-
-    deliveryBox.style.display = 'block';
-    deliveryStatus.textContent = 'Завантажую способи доставки...';
-    deliveryOptions.innerHTML = '';
-
-    try {
-        // Київ — координати, які ти вже використовував
-        const latitude = 50.44747065;
-        const longitude = 30.521505797601343;
-
-        const response = await fetch(
-            `/api/silpo/delivery?latitude=${latitude}&longitude=${longitude}`
-        );
-
-        if (!response.ok) {
-            throw new Error(
-                await response.text() || 'Не вдалося отримати способи доставки'
-            );
-        }
-
-        const data = await response.json();
-
-        const options = data.options || [];
-
-        if (!options.length) {
-            deliveryStatus.textContent =
-                'Для цієї адреси доступних способів доставки немає.';
-            return;
-        }
-
-        deliveryStatus.textContent =
-            `Доступно способів доставки: ${options.length}`;
-
-        deliveryOptions.innerHTML = options.map((option, index) => `
-            <button
-                class="delivery-option"
-                data-index="${index}"
-                data-branch-id="${option.branchId || ''}"
-                data-delivery-type="${option.deliveryType}">
-                
-                <strong>${getDeliveryName(option.deliveryType)}</strong>
-                <span>${option.description || ''}</span>
-            </button>
-        `).join('');
-
-        document
-            .querySelectorAll('.delivery-option')
-            .forEach(button => {
-
-                button.addEventListener('click', async () => {
-
-                    document
-                        .querySelectorAll('.delivery-option')
-                        .forEach(x => x.classList.remove('selected'));
-
-                    button.classList.add('selected');
-
-                    selectedBranchId =
-                        button.dataset.branchId || null;
-
-                    selectedDeliveryType =
-                        button.dataset.deliveryType;
-
-                    // Час потрібен тільки якщо є branchId
-                    if (!selectedBranchId) {
-                        document.getElementById('timeSlotsBox').style.display = 'none';
-
-                        deliveryStatus.textContent =
-                            `${getDeliveryName(selectedDeliveryType)} вибрано. Для цього типу потрібні додаткові дані.`;
-
-                        return;
-                    }
-
-                    await loadTimeSlots(
-                        selectedBranchId,
-                        selectedDeliveryType
-                    );
-                });
-            });
-
-    } catch (error) {
-        deliveryStatus.innerHTML = `
-            <strong>Помилка доставки</strong>
-            <br>
-            ${escapeHtml(error.message)}
-        `;
-    }
-}
-
-
-// ================================
-// Назви способів доставки
-// ================================
-function getDeliveryName(type) {
-    switch (type) {
-        case 'DeliveryHome':
-            return '🚚 Доставка додому';
-
-        case 'WideAssortDelivery':
-            return '📦 Доставка широкого асортименту';
-
-        case 'B2B':
-            return '🏢 B2B доставка';
-
-        case 'NovaPoshta':
-            return '📮 Нова Пошта';
-
-        case 'SelfPickup':
-            return '🏪 Самовивіз';
-
-        default:
-            return type;
-    }
-}
-
-
-// ================================
-// SILPO MCP — час доставки
-// ================================
-async function loadTimeSlots(branchId, deliveryType) {
-
-    const timeSlotsBox =
-        document.getElementById('timeSlotsBox');
-
-    const timeSlots =
-        document.getElementById('timeSlots');
-
-    timeSlotsBox.style.display = 'block';
-
-    timeSlots.innerHTML =
-        '<div class="meta">⏳ Завантажую доступний час...</div>';
-
-    try {
-
-        const url =
-            `/api/silpo/timeslots` +
-            `?branchId=${encodeURIComponent(branchId)}` +
-            `&deliveryType=${encodeURIComponent(deliveryType)}`;
-
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            throw new Error(
-                await response.text() ||
-                'Не вдалося отримати час доставки'
-            );
-        }
-
-        const data = await response.json();
-
-        const slots = data.slots || [];
-
-        if (!slots.length) {
-            timeSlots.innerHTML = `
-                <div class="meta">
-                    На найближчий час доступних слотів немає.
-                </div>
-            `;
-            return;
-        }
-
-        timeSlots.innerHTML = slots.map((slot, index) => `
-            <button
-                class="time-slot"
-                data-index="${index}"
-                data-start="${slot.start}"
-                data-end="${slot.end}">
-
-                <strong>${slot.time}</strong>
-
-                <span>
-                    ${slot.date}
-                </span>
-
-                <small>
-                    Доставка: ${slot.deliveryCost} грн
-                </small>
-            </button>
-        `).join('');
-
-        document
-            .querySelectorAll('.time-slot')
-            .forEach(button => {
-
-                button.addEventListener('click', () => {
-
-                    document
-                        .querySelectorAll('.time-slot')
-                        .forEach(x =>
-                            x.classList.remove('selected')
-                        );
-
-                    button.classList.add('selected');
-
-                    const start =
-                        button.dataset.start;
-
-                    const end =
-                        button.dataset.end;
-
-                    console.log(
-                        'Вибраний слот:',
-                        start,
-                        end
-                    );
-
-                    // Тут пізніше можна передати
-                    // вибраний слот у кошик Silpo.
-                });
-            });
-
-    } catch (error) {
-
-        timeSlots.innerHTML = `
-            <div class="meta">
-                <strong>Помилка</strong><br>
-                ${escapeHtml(error.message)}
-            </div>
-        `;
-    }
-}
-
-
-// ================================
-// Безпечний текст
-// ================================
-function escapeHtml(value) {
-    return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-}
-
 
 
 sendBtn.addEventListener(
@@ -988,11 +1779,86 @@ messageInput.addEventListener(
         }
     }
 );
-
-
 // =====================================================
-// START APPLICATION
+// AUTHORIZATION
 // =====================================================
 
+async function checkAuthorization() {
+
+    try {
+
+        const response =
+            await fetch('/api/silpo/status');
+
+        if (!response.ok) {
+
+            setLoggedOut();
+
+            return;
+        }
+
+        const data =
+            await response.json();
+
+        if (data.authenticated === true) {
+
+            setLoggedIn();
+
+        } else {
+
+            setLoggedOut();
+
+        }
+
+    }
+    catch (error) {
+
+        console.error(
+            'Помилка перевірки авторизації:',
+            error
+        );
+
+        setLoggedOut();
+    }
+}
+
+
+function setLoggedIn() {
+
+    loginBtn.textContent =
+        '✓ Silpo підключено';
+
+    loginBtn.classList.add(
+        'logged-in'
+    );
+
+    sendBtn.disabled = false;
+}
+
+
+function setLoggedOut() {
+
+    loginBtn.textContent =
+        'Увійти через Silpo';
+
+    loginBtn.classList.remove(
+        'logged-in'
+    );
+}
+
+
+loginBtn.addEventListener(
+    'click',
+    () => {
+
+        window.location.href =
+            '/api/silpo/login';
+
+    }
+);
+
+// =====================================================
+// START
+// =====================================================
+checkAuthorization();
 loadProducts();
-

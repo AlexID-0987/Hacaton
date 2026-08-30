@@ -1,9 +1,7 @@
-using Hacaton.Data;
 using Hacaton.Models;
 using Hacaton.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Routing;
-using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace Hacaton.Controllers;
 
@@ -11,214 +9,215 @@ namespace Hacaton.Controllers;
 [Route("api/[controller]")]
 public class AssistantController : ControllerBase
 {
-    private readonly ApplicationDbContext _context;
-    private readonly IProductRecommendationService _recommendationService;
+    private readonly SilpoMcpService _silpoMcpService;
+    private readonly SilpoTokenStore _tokenStore;
 
-    public AssistantController(ApplicationDbContext context, IProductRecommendationService recommendationService)
+    public AssistantController(
+        SilpoMcpService silpoMcpService,
+        SilpoTokenStore tokenStore)
     {
-        _context = context;
-        _recommendationService = recommendationService;
+        _silpoMcpService = silpoMcpService;
+        _tokenStore = tokenStore;
     }
 
-    [HttpGet("products")]
-    public async Task<ActionResult<IEnumerable<ProductSummaryDto>>> GetProducts()
-    {
-        var products = await _context.Products
-            .Where(p => p.InStock)
-            .Select(p => new ProductSummaryDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                Price = p.Price,
-                Category = p.Category,
-                ImageUrl = p.ImageUrl
-            })
-            .ToListAsync();
-
-        return Ok(products);
-    }
+    // =========================================================
+    // AI ASSISTANT
+    // =========================================================
 
     [HttpPost]
-    public async Task<ActionResult<AssistantResponse>> Ask([FromBody] UserRequest request)
+    public async Task<IActionResult> Ask(
+        [FromBody] UserRequest request)
     {
-        var message = request.Message ?? string.Empty;
-
-        if (string.IsNullOrWhiteSpace(message))
+        if (string.IsNullOrWhiteSpace(request.Message))
         {
-            return BadRequest(new { message = "Повідомлення не може бути порожнім." });
-        }
-
-        var products = await _context.Products
-            .Where(p => p.InStock)
-            .ToListAsync();
-
-        var response = await _recommendationService.Generate(products, message);
-        return Ok(response);
-    }
-    
-    
-    [HttpGet("silpo-register")]
-    public async Task<IActionResult> RegisterSilpoClient(
-    [FromServices] SilpoOAuthService oauthService)
-    {
-        var result = await oauthService.RegisterClientAsync();
-
-        return Content(result);
-    }
-    
-    [HttpGet("silpo-test")]
-    public async Task<IActionResult> TestSilpo(
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.TestAsync(
-            tokenStore.AccessToken);
-
-        return Content(result);
-    }
-    [HttpGet("silpo-tools")]
-    public async Task<IActionResult> GetSilpoTools(
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.GetToolsAsync(
-            tokenStore.AccessToken);
-
-        return Content(result);
-    }
-    [HttpGet("silpo-address")]
-    public async Task<IActionResult> FindSilpoAddress(
-    [FromQuery] string address,
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.FindAddressAsync(
-            tokenStore.AccessToken,
-            address);
-
-        return Content(result);
-    }
-    [HttpGet("silpo-delivery-types")]
-    public async Task<IActionResult> GetDeliveryTypes(
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.GetDeliveryTypesAsync(
-            tokenStore.AccessToken);
-
-        return Content(result, "application/json");
-    }
-    [HttpGet("silpo-delivery")]
-    public async Task<IActionResult> GetSilpoDelivery(
-    [FromQuery] double latitude,
-    [FromQuery] double longitude,
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService
-            .GetAvailableDeliveryTypesAsync(
-                tokenStore.AccessToken,
-                latitude,
-                longitude);
-
-        return Content(result, "application/json");
-    }
-    [HttpGet("silpo-slots")]
-    public async Task<IActionResult> GetSilpoSlots(
-    [FromQuery] string branchId,
-    [FromQuery] string deliveryType,
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.GetTimeSlotsAsync(
-            tokenStore.AccessToken,
-            branchId,
-            deliveryType);
-
-        return Content(result, "application/json");
-    }
-    [HttpGet("silpo-products")]
-    public async Task<IActionResult> GetSilpoProducts(
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
-    {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
-        {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
-        }
-
-        var result = await silpoMcpService.FindProductsAsync(
-            tokenStore.AccessToken,
-            "1edb6b38-214b-66d6-a8e0-7f2fdd178564",
-            "DeliveryHome",
-            "2026-08-26T06:00:00+00:00",
-            "2026-08-26T07:30:00+00:00",
-            new[] { "Молоко", "Хліб", "Яйця" });
-
-        return Content(result, "application/json");
-    }
-    [ApiController]
-    [Route("api/silpo")]
-    public class SilpoController : ControllerBase
-    {
-        [HttpGet("products")]
-        public async Task<IActionResult> GetProducts(
-            [FromQuery] string products,
-            [FromServices] SilpoMcpService silpoMcpService,
-            [FromServices] SilpoTokenStore tokenStore)
-        {
-            if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
+            return BadRequest(new
             {
-                return Unauthorized(
-                    "Спочатку авторизуйтесь через /api/silpo/login");
+                message = "Повідомлення не може бути порожнім."
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(_tokenStore.AccessToken))
+        {
+            return Unauthorized(new
+            {
+                message =
+                    "Спочатку авторизуйтесь через /api/silpo/login"
+            });
+        }
+
+        try
+        {
+            // Витягуємо товари із запиту користувача
+            var products = ExtractProducts(request.Message);
+
+            if (products.Length == 0)
+            {
+                return Ok(new
+                {
+                    message =
+                        "Напишіть, які товари ви хочете придбати. " +
+                        "Наприклад: молоко, хліб та яйця до 350 грн.",
+                    items = Array.Empty<object>(),
+                    budget = ExtractBudget(request.Message),
+                    totalPrice = 0
+                });
             }
 
-            var result = await silpoMcpService.FindProductsAsync(
-                tokenStore.AccessToken,
-                "1edb6b38-214b-66d6-a8e0-7f2fdd178564",
-                "DeliveryHome",
-                "2026-08-26T06:00:00+00:00",
-                "2026-08-26T07:30:00+00:00",
-                new[] { products });
+            // Поки використовуємо твою актуальну філію
+            var branchId =
+                "1edb6b38-214b-66d6-a8e0-7f2fdd178564";
 
-            return Content(result, "application/json");
+            var deliveryType =
+                "DeliveryHome";
+
+            // Тимчасовий слот.
+            // Пізніше підставимо вибраний користувачем слот.
+            var timeslotStart =
+                "2026-08-26T06:00:00+00:00";
+
+            var timeslotEnd =
+                "2026-08-26T07:30:00+00:00";
+
+            var result =
+                await _silpoMcpService.FindProductsAsync(
+                    _tokenStore.AccessToken,
+                    branchId,
+                    deliveryType,
+                    timeslotStart,
+                    timeslotEnd,
+                    products);
+
+            return Content(
+                result,
+                "application/json");
         }
+        catch (Exception ex)
+        {
+            return StatusCode(
+                500,
+                new
+                {
+                    message = "Помилка отримання товарів Silpo.",
+                    error = ex.Message
+                });
+        }
+    }
+
+
+    // =========================================================
+    // ВИДАЛЕНО РОБОТУ З БАЗОЮ
+    // =========================================================
+    //
+    // Цей endpoint залишаємо тільки для сумісності
+    // зі старим index.js.
+    //
+    // Тепер він НЕ бере товари з InMemory.
+    //
+    // Пізніше можемо повністю прибрати його з JS.
+    // =========================================================
+
+    [HttpGet("products")]
+    public IActionResult GetProducts()
+    {
+        return Ok(new
+        {
+            success = true,
+            message =
+                "Товари більше не завантажуються з локальної бази. " +
+                "Використовується Silpo MCP."
+        });
+    }
+
+
+    // =========================================================
+    // ДОПОМІЖНІ МЕТОДИ
+    // =========================================================
+
+    private static decimal ExtractBudget(string text)
+    {
+        var match = Regex.Match(
+            text,
+            @"(\d+(?:[.,]\d+)?)\s*(грн|uah|₴)",
+            RegexOptions.IgnoreCase);
+
+        if (match.Success)
+        {
+            return decimal.Parse(
+                match.Groups[1].Value.Replace(',', '.'),
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        var fallback = Regex.Match(
+            text,
+            @"до\s*(\d+(?:[.,]\d+)?)",
+            RegexOptions.IgnoreCase);
+
+        if (fallback.Success)
+        {
+            return decimal.Parse(
+                fallback.Groups[1].Value.Replace(',', '.'),
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return 0;
+    }
+
+
+    private static string[] ExtractProducts(string text)
+    {
+        var knownProducts = new[]
+        {
+            "молоко",
+            "хліб",
+            "яйця",
+            "яйце",
+            "сир",
+            "йогурт",
+            "сметана",
+
+            "яблука",
+            "яблуко",
+            "банани",
+            "банан",
+            "груша",
+            "груші",
+
+            "огірки",
+            "огірок",
+            "помідори",
+            "помідор",
+            "картопля",
+            "капуста",
+            "буряк",
+            "морква",
+
+            "куряче філе",
+            "курятина",
+            "курка",
+            "свинина",
+            "яловичина",
+
+            "лосось",
+            "риба",
+
+            "вода",
+            "сік"
+        };
+
+        var result = new List<string>();
+
+        foreach (var product in knownProducts)
+        {
+            if (text.Contains(
+                    product,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(product);
+            }
+        }
+
+        return result
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 }

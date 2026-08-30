@@ -1,9 +1,10 @@
-﻿using Hacaton.Services;
+﻿
+using Hacaton.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-
 
 namespace Hacaton.Controllers;
 
@@ -14,11 +15,23 @@ public class SilpoAuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly SilpoTokenStore _tokenStore;
 
-    public SilpoAuthController(IConfiguration configuration, SilpoTokenStore tokenStore)
+    // Branch ID, який ти вже використовував
+    private const string DefaultBranchId =
+        "1edb6b38-214b-66d6-a8e0-7f2fdd178564";
+
+    private const string DefaultDeliveryType = "DeliveryHome";
+
+    public SilpoAuthController(
+        IConfiguration configuration,
+        SilpoTokenStore tokenStore)
     {
         _configuration = configuration;
         _tokenStore = tokenStore;
     }
+
+    // ============================================================
+    // LOGIN
+    // ============================================================
 
     [HttpGet("login")]
     public IActionResult Login()
@@ -91,11 +104,16 @@ public class SilpoAuthController : ControllerBase
             .Replace("/", "_")
             .Replace("=", "");
     }
+
+    // ============================================================
+    // CALLBACK
+    // ============================================================
+
     [HttpGet("callback")]
     public async Task<IActionResult> Callback(
-    [FromQuery] string? code,
-    [FromQuery] string? state,
-    [FromQuery] string? error)
+        [FromQuery] string? code,
+        [FromQuery] string? state,
+        [FromQuery] string? error)
     {
         if (!string.IsNullOrEmpty(error))
         {
@@ -110,7 +128,8 @@ public class SilpoAuthController : ControllerBase
             return BadRequest("Authorization code відсутній.");
         }
 
-        var savedState = Request.Cookies["silpo_oauth_state"];
+        var savedState =
+            Request.Cookies["silpo_oauth_state"];
 
         if (string.IsNullOrEmpty(savedState) ||
             savedState != state)
@@ -118,15 +137,19 @@ public class SilpoAuthController : ControllerBase
             return BadRequest("Невірний OAuth state.");
         }
 
-        var codeVerifier = Request.Cookies["silpo_code_verifier"];
+        var codeVerifier =
+            Request.Cookies["silpo_code_verifier"];
 
         if (string.IsNullOrEmpty(codeVerifier))
         {
             return BadRequest("PKCE code_verifier відсутній.");
         }
 
-        var clientId = _configuration["Silpo:ClientId"];
-        var clientSecret = _configuration["Silpo:ClientSecret"];
+        var clientId =
+            _configuration["Silpo:ClientId"];
+
+        var clientSecret =
+            _configuration["Silpo:ClientSecret"];
 
         using var httpClient = new HttpClient();
 
@@ -149,8 +172,8 @@ public class SilpoAuthController : ControllerBase
                 {
                     ["grant_type"] = "authorization_code",
                     ["code"] = code,
-                    ["redirect_uri"] =
-                "http://localhost:5068/api/silpo/callback",
+                    ["redirect_uri"] = "http://localhost:5068/api/silpo/callback",
+                    
                     ["code_verifier"] = codeVerifier
                 });
 
@@ -167,67 +190,78 @@ public class SilpoAuthController : ControllerBase
                 content);
         }
 
-        using var json = JsonDocument.Parse(content);
+        using var json =
+            JsonDocument.Parse(content);
 
-        var accessToken = json.RootElement
-            .GetProperty("access_token")
-            .GetString();
-             
+        var accessToken =
+            json.RootElement
+                .GetProperty("access_token")
+                .GetString();
 
         if (string.IsNullOrWhiteSpace(accessToken))
         {
-            return BadRequest("Access token не отримано.");
+            return BadRequest(
+                "Access token не отримано.");
         }
 
-        _tokenStore.AccessToken = accessToken;
+        _tokenStore.AccessToken =
+            accessToken;
 
-        return Ok(new
-        {
-            message = "Авторизація успішна. Access token отримано."
-        });
+        return Redirect("/") ;
+        //return Ok(new { message = "Авторизація успішна. Access token отримано." });
     }
-    [HttpGet("products")]
-    public async Task<IActionResult> GetProducts(
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromQuery] string[] products)
+
+    // ============================================================
+    // TOOLS
+    // ============================================================
+
+    [HttpGet("tools")]
+    public async Task<IActionResult> GetTools(
+        [FromServices] SilpoMcpService silpoMcpService)
     {
         var token = _tokenStore.AccessToken;
 
-        if (string.IsNullOrEmpty(token))
+        if (string.IsNullOrWhiteSpace(token))
         {
-            return Unauthorized(
-                "Спочатку авторизуйтесь через /api/silpo/login");
+            return Unauthorized(new
+            {
+                message =
+                    "Спочатку авторизуйтесь через /api/silpo/login"
+            });
         }
 
-        if (products.Length == 0)
+        try
         {
-            return BadRequest("Вкажіть хоча б один товар.");
+            var result =
+                await silpoMcpService.GetToolsAsync(token);
+
+            return Content(
+                result,
+                "application/json");
         }
-
-        
-        var branchId = "1edb6b38-214b-66d6-a8e0-7f2fdd178564";
-        var deliveryType = "DeliveryHome";
-
-        var timeslotStart = "2026-08-26T06:00:00+00:00";
-        var timeslotEnd = "2026-08-26T07:30:00+00:00";
-
-        var result = await silpoMcpService.FindProductsAsync(
-            token,
-            branchId,
-            deliveryType,
-            timeslotStart,
-            timeslotEnd,
-            products);
-
-        return Content(result, "application/json");
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                message =
+                    "Помилка отримання MCP tools.",
+                error = ex.Message
+            });
+        }
     }
+
+    // ============================================================
+    // DELIVERY
+    // ============================================================
+
     [HttpGet("delivery")]
     public async Task<IActionResult> GetDelivery(
-    [FromQuery] double latitude,
-    [FromQuery] double longitude,
-    [FromServices] SilpoMcpService silpoMcpService)
+        [FromQuery] double latitude,
+        [FromQuery] double longitude,
+        [FromServices] SilpoMcpService silpoMcpService)
     {
-        if (string.IsNullOrWhiteSpace(_tokenStore.AccessToken))
+        if (string.IsNullOrWhiteSpace(
+            _tokenStore.AccessToken))
         {
             return Unauthorized(
                 "Спочатку авторизуйтесь через /api/silpo/login");
@@ -241,36 +275,40 @@ public class SilpoAuthController : ControllerBase
 
         try
         {
-            var deliveryResult =
-                await silpoMcpService.GetAvailableDeliveryTypesAsync(
-                    _tokenStore.AccessToken,
-                    latitude,
-                    longitude);
+            var result =
+                await silpoMcpService
+                    .GetAvailableDeliveryTypesAsync(
+                        _tokenStore.AccessToken,
+                        latitude,
+                        longitude);
 
             return Content(
-                deliveryResult,
+                result,
                 "application/json");
         }
         catch (Exception ex)
         {
-            return StatusCode(
-                500,
-                new
-                {
-                    message = "Помилка отримання способів доставки.",
-                    error = ex.Message
-                });
+            return StatusCode(500, new
+            {
+                message =
+                    "Помилка отримання способів доставки.",
+                error = ex.Message
+            });
         }
     }
+
+    // ============================================================
+    // TIME SLOTS
+    // ============================================================
+
     [HttpGet("time-slots")]
-    [HttpGet("timeslots")]
     public async Task<IActionResult> GetTimeSlots(
-    [FromQuery] string branchId,
-    [FromQuery] string deliveryType,
-    [FromServices] SilpoMcpService silpoMcpService,
-    [FromServices] SilpoTokenStore tokenStore)
+        [FromQuery] string branchId,
+        [FromQuery] string deliveryType,
+        [FromServices] SilpoMcpService silpoMcpService)
     {
-        if (string.IsNullOrWhiteSpace(tokenStore.AccessToken))
+        if (string.IsNullOrWhiteSpace(
+            _tokenStore.AccessToken))
         {
             return Unauthorized(
                 "Спочатку авторизуйтесь через /api/silpo/login");
@@ -278,19 +316,738 @@ public class SilpoAuthController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(branchId))
         {
-            return BadRequest("Не вказано branchId.");
+            return BadRequest(
+                "Не вказано branchId.");
         }
 
         if (string.IsNullOrWhiteSpace(deliveryType))
         {
-            return BadRequest("Не вказано deliveryType.");
+            return BadRequest(
+                "Не вказано deliveryType.");
         }
 
-        var result = await silpoMcpService.GetTimeSlotsAsync(
-            tokenStore.AccessToken,
-            branchId,
-            deliveryType);
+        var result =
+            await silpoMcpService.GetTimeSlotsAsync(
+                _tokenStore.AccessToken,
+                branchId,
+                deliveryType);
 
-        return Content(result, "application/json");
+        return Content(
+            result,
+            "application/json");
+    }
+
+    // ============================================================
+    // PRODUCTS - AUTOMATIC
+    // ============================================================
+
+
+
+
+    [HttpGet("products")]
+    public async Task<IActionResult> GetProducts(
+[FromServices] SilpoMcpService silpoMcpService,
+[FromQuery] string[]? products)
+    {
+        var token = _tokenStore.AccessToken;
+
+// ============================================
+// 0. Перевірка авторизації
+// ============================================
+
+if (string.IsNullOrWhiteSpace(token))
+        {
+            return Unauthorized(new
+            {
+                success = false,
+                message = "Спочатку авторизуйтесь через /api/silpo/login"
+            });
+        }
+
+        // ============================================
+        // 1. Якщо товари не передані
+        // ============================================
+
+        if (products == null || products.Length == 0)
+        {
+            products =
+            [
+                "Молоко",
+        "Хліб",
+        "Яйця"
+            ];
+        }
+
+        // ============================================
+        // 2. Максимум 30 товарів
+        // ============================================
+
+        if (products.Length > 30)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                message = "Максимум можна шукати 30 товарів."
+            });
+        }
+
+        try
+        {
+            // ============================================
+            // 3. Отримуємо актуальні time slots
+            // ============================================
+
+            var slotsResult =
+                await silpoMcpService.GetTimeSlotsAsync(
+                    token,
+                    DefaultBranchId,
+                    DefaultDeliveryType);
+
+            if (string.IsNullOrWhiteSpace(slotsResult))
+            {
+                return StatusCode(502, new
+                {
+                    success = false,
+                    message = "Silpo MCP не повернув time slots."
+                });
+            }
+
+            // ============================================
+            // 4. Розбираємо time slots
+            // ============================================
+
+            using var slotsDocument =
+                JsonDocument.Parse(slotsResult);
+
+            var root = slotsDocument.RootElement;
+
+            if (!root.TryGetProperty(
+                    "success",
+                    out var successElement) ||
+                successElement.ValueKind != JsonValueKind.True)
+            {
+                return StatusCode(502, new
+                {
+                    success = false,
+                    message = "Не вдалося отримати time slots.",
+                    details = slotsResult
+                });
+            }
+
+            if (!root.TryGetProperty(
+                    "slots",
+                    out var slots) ||
+                slots.ValueKind != JsonValueKind.Array)
+            {
+                return StatusCode(502, new
+                {
+                    success = false,
+                    message = "У відповіді Silpo MCP немає slots."
+                });
+            }
+
+            // ============================================
+            // 5. Вибираємо перший доступний слот
+            // ============================================
+
+            string? selectedDate = null;
+            string? selectedStart = null;
+            string? selectedEnd = null;
+            string? selectedTime = null;
+
+            foreach (var slot in slots.EnumerateArray())
+            {
+                if (!slot.TryGetProperty(
+                        "date",
+                        out var dateElement))
+                {
+                    continue;
+                }
+
+                if (!slot.TryGetProperty(
+                        "start",
+                        out var startElement))
+                {
+                    continue;
+                }
+
+                if (!slot.TryGetProperty(
+                        "end",
+                        out var endElement))
+                {
+                    continue;
+                }
+
+                var date =
+                    dateElement.ValueKind == JsonValueKind.String
+                        ? dateElement.GetString()
+                        : null;
+
+                var start =
+                    startElement.ValueKind == JsonValueKind.String
+                        ? startElement.GetString()
+                        : null;
+
+                var end =
+                    endElement.ValueKind == JsonValueKind.String
+                        ? endElement.GetString()
+                        : null;
+
+                if (string.IsNullOrWhiteSpace(date) ||
+                    string.IsNullOrWhiteSpace(start) ||
+                    string.IsNullOrWhiteSpace(end))
+                {
+                    continue;
+                }
+
+                selectedDate = date;
+                selectedStart = $"{date} {start}";
+                selectedEnd = $"{date} {end}";
+                selectedTime = $"{start}–{end}";
+
+                break;
+            }
+
+            // ============================================
+            // 6. Якщо немає доступного часу
+            // ============================================
+
+            if (selectedStart == null ||
+                selectedEnd == null)
+            {
+                return Ok(new
+                {
+                    success = false,
+                    message =
+                        "Silpo MCP повернув slots, але немає доступного часу.",
+                    branchId = DefaultBranchId,
+                    deliveryType = DefaultDeliveryType
+                });
+            }
+
+            // ============================================
+            // 7. Перетворюємо дату початку
+            // ============================================
+
+            if (!DateTime.TryParseExact(
+                    selectedStart,
+                    "dd.MM.yyyy HH:mm",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var startLocal))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        $"Не вдалося розібрати start: {selectedStart}"
+                });
+            }
+
+            // ============================================
+            // 8. Перетворюємо дату кінця
+            // ============================================
+
+            if (!DateTime.TryParseExact(
+                    selectedEnd,
+                    "dd.MM.yyyy HH:mm",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var endLocal))
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message =
+                        $"Не вдалося розібрати end: {selectedEnd}"
+                });
+            }
+
+            // ============================================
+            // 9. Київський часовий пояс
+            // ============================================
+
+            var kyivOffset =
+                new TimeSpan(3, 0, 0);
+
+            var startWithOffset =
+                new DateTimeOffset(
+                    DateTime.SpecifyKind(
+                        startLocal,
+                        DateTimeKind.Unspecified),
+                    kyivOffset);
+
+            var endWithOffset =
+                new DateTimeOffset(
+                    DateTime.SpecifyKind(
+                        endLocal,
+                        DateTimeKind.Unspecified),
+                    kyivOffset);
+
+            var timeslotStart =
+                startWithOffset.ToString(
+                    "yyyy-MM-dd'T'HH:mm:sszzz");
+
+            var timeslotEnd =
+                endWithOffset.ToString(
+                    "yyyy-MM-dd'T'HH:mm:sszzz");
+
+            // ============================================
+            // 10. Шукаємо товари в Silpo
+            // ============================================
+
+            var productsResult =
+                await silpoMcpService.FindProductsAsync(
+                    token,
+                    DefaultBranchId,
+                    DefaultDeliveryType,
+                    timeslotStart,
+                    timeslotEnd,
+                    products);
+
+            if (string.IsNullOrWhiteSpace(productsResult))
+            {
+                return StatusCode(502, new
+                {
+                    success = false,
+                    message =
+                        "Silpo MCP не повернув результат пошуку товарів."
+                });
+            }
+
+            // ============================================
+            // 11. Розбираємо JSON від MCP
+            // ============================================
+
+            JsonElement actualResult;
+
+            using (var productsDocument =
+                   JsonDocument.Parse(productsResult))
+            {
+                var productsRoot =
+                    productsDocument.RootElement;
+
+                // ВАЖЛИВО:
+                // Clone() дозволяє використовувати JsonElement
+                // після Dispose JsonDocument.
+
+                if (productsRoot.TryGetProperty(
+                        "result",
+                        out var resultElement))
+                {
+                    actualResult =
+                        resultElement.Clone();
+                }
+                else
+                {
+                    actualResult =
+                        productsRoot.Clone();
+                }
+            }
+
+            // ============================================
+            // 12. Обробка MCP result/content/text
+            // ============================================
+
+            if (actualResult.TryGetProperty(
+                    "content",
+                    out var contentElement) &&
+                contentElement.ValueKind == JsonValueKind.Array &&
+                contentElement.GetArrayLength() > 0)
+            {
+                var firstContent =
+                    contentElement[0];
+
+                if (firstContent.TryGetProperty(
+                        "text",
+                        out var textElement) &&
+                    textElement.ValueKind == JsonValueKind.String)
+                {
+                    var text =
+                        textElement.GetString();
+
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        try
+                        {
+                            using var innerDocument =
+                                JsonDocument.Parse(text);
+
+                            actualResult =
+                                innerDocument.RootElement.Clone();
+                        }
+                        catch (JsonException)
+                        {
+                            // text не є JSON.
+                            // Залишаємо actualResult без змін.
+                        }
+                    }
+                }
+            }
+
+            // ============================================
+            // 13. Створюємо компактний список товарів
+            // ============================================
+
+            var simplifiedProducts =
+                new List<object>();
+
+            if (actualResult.TryGetProperty(
+                    "queries",
+                    out var queriesElement) &&
+                queriesElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var queryElement
+                         in queriesElement.EnumerateArray())
+                {
+                    // ------------------------------------
+                    // Назва пошукового запиту
+                    // ------------------------------------
+
+                    string query = "";
+
+                    if (queryElement.TryGetProperty(
+                            "query",
+                            out var queryProperty) &&
+                        queryProperty.ValueKind ==
+                            JsonValueKind.String)
+                    {
+                        query =
+                            queryProperty.GetString() ?? "";
+                    }
+
+                    // ------------------------------------
+                    // Масив товарів
+                    // ------------------------------------
+
+                    if (!queryElement.TryGetProperty(
+                            "products",
+                            out var productsArray))
+                    {
+                        continue;
+                    }
+
+                    if (productsArray.ValueKind !=
+                        JsonValueKind.Array)
+                    {
+                        continue;
+                    }
+
+                    // Максимум 5 товарів
+                    // на один пошуковий запит
+                    var count = 0;
+
+                    foreach (var product
+                             in productsArray.EnumerateArray())
+                    {
+                        if (count >= 5)
+                        {
+                            break;
+                        }
+
+                        // =================================
+                        // NAME
+                        // =================================
+
+                        string? name = null;
+
+                        if (product.TryGetProperty(
+                                "name",
+                                out var nameElement) &&
+                            nameElement.ValueKind ==
+                                JsonValueKind.String)
+                        {
+                            name =
+                                nameElement.GetString();
+                        }
+
+                        // =================================
+                        // PRICE
+                        // =================================
+
+                        decimal? price = null;
+
+                        if (product.TryGetProperty(
+                                "price",
+                                out var priceElement))
+                        {
+                            if (priceElement.ValueKind ==
+                                JsonValueKind.Number)
+                            {
+                                if (priceElement.TryGetDecimal(
+                                        out var numberPrice))
+                                {
+                                    price = numberPrice;
+                                }
+                            }
+                            else if (
+                                priceElement.ValueKind ==
+                                JsonValueKind.String)
+                            {
+                                if (decimal.TryParse(
+                                        priceElement.GetString(),
+                                        NumberStyles.Any,
+                                        CultureInfo.InvariantCulture,
+                                        out var stringPrice))
+                                {
+                                    price = stringPrice;
+                                }
+                            }
+                        }
+
+                        // =================================
+                        // OLD PRICE
+                        // =================================
+
+                        decimal? oldPrice = null;
+
+                        if (product.TryGetProperty(
+                                "oldPrice",
+                                out var oldPriceElement))
+                        {
+                            if (oldPriceElement.ValueKind ==
+                                JsonValueKind.Number)
+                            {
+                                if (oldPriceElement.TryGetDecimal(
+                                        out var numberOldPrice))
+                                {
+                                    oldPrice = numberOldPrice;
+                                }
+                            }
+                            else if (
+                                oldPriceElement.ValueKind ==
+                                JsonValueKind.String)
+                            {
+                                if (decimal.TryParse(
+                                        oldPriceElement.GetString(),
+                                        NumberStyles.Any,
+                                        CultureInfo.InvariantCulture,
+                                        out var stringOldPrice))
+                                {
+                                    oldPrice = stringOldPrice;
+                                }
+                            }
+                        }
+
+                        // =================================
+                        // STOCK
+                        // =================================
+
+                        int? stock = null;
+
+                        if (product.TryGetProperty(
+                                "stock",
+                                out var stockElement))
+                        {
+                            if (stockElement.ValueKind ==
+                                JsonValueKind.Number)
+                            {
+                                if (stockElement.TryGetInt32(
+                                        out var numberStock))
+                                {
+                                    stock = numberStock;
+                                }
+                                else if (
+                                    stockElement.TryGetInt64(
+                                        out var longStock))
+                                {
+                                    stock =
+                                        (int)longStock;
+                                }
+                            }
+                            else if (
+                                stockElement.ValueKind ==
+                                JsonValueKind.String)
+                            {
+                                if (int.TryParse(
+                                        stockElement.GetString(),
+                                        NumberStyles.Integer,
+                                        CultureInfo.InvariantCulture,
+                                        out var stringStock))
+                                {
+                                    stock = stringStock;
+                                }
+                            }
+                        }
+
+                        // =================================
+                        // AVAILABLE
+                        // =================================
+
+                        bool? available = null;
+
+                        if (product.TryGetProperty(
+                                "available",
+                                out var availableElement))
+                        {
+                            if (availableElement.ValueKind ==
+                                JsonValueKind.True)
+                            {
+                                available = true;
+                            }
+                            else if (
+                                availableElement.ValueKind ==
+                                JsonValueKind.False)
+                            {
+                                available = false;
+                            }
+                            else if (
+                                availableElement.ValueKind ==
+                                JsonValueKind.String)
+                            {
+                                if (bool.TryParse(
+                                        availableElement.GetString(),
+                                        out var stringAvailable))
+                                {
+                                    available =
+                                        stringAvailable;
+                                }
+                            }
+                        }
+
+                        // =================================
+                        // IMAGE
+                        // =================================
+
+                        string? image = null;
+
+                        if (product.TryGetProperty(
+                                "image",
+                                out var imageElement) &&
+                            imageElement.ValueKind ==
+                                JsonValueKind.String)
+                        {
+                            image =
+                                imageElement.GetString();
+                        }
+
+                        // =================================
+                        // DISPLAY RATIO
+                        // =================================
+
+                        string? displayRatio = null;
+
+                        if (product.TryGetProperty(
+                                "displayRatio",
+                                out var ratioElement) &&
+                            ratioElement.ValueKind ==
+                                JsonValueKind.String)
+                        {
+                            displayRatio =
+                                ratioElement.GetString();
+                        }
+
+                        // =================================
+                        // SLUG
+                        // =================================
+
+                        string? slug = null;
+
+                        if (product.TryGetProperty(
+                                "slug",
+                                out var slugElement) &&
+                            slugElement.ValueKind ==
+                                JsonValueKind.String)
+                        {
+                            slug =
+                                slugElement.GetString();
+                        }
+
+                        // =================================
+                        // Додаємо товар
+                        // =================================
+
+                        simplifiedProducts.Add(new
+                        {
+                            query,
+                            name,
+                            price,
+                            oldPrice,
+                            stock,
+                            available,
+                            displayRatio,
+                            image,
+                            slug
+                        });
+
+                        count++;
+                    }
+                }
+            }
+
+            // ============================================
+            // 14. Фінальна відповідь
+            // ============================================
+
+            return new JsonResult(
+                new
+                {
+                    success = true,
+
+                    branchId = DefaultBranchId,
+
+                    deliveryType = DefaultDeliveryType,
+
+                    timeslot = new
+                    {
+                        date = selectedDate,
+                        time = selectedTime,
+                        start = timeslotStart,
+                        end = timeslotEnd
+                    },
+
+                    requestedProducts = products,
+
+                    totalProducts =
+                        simplifiedProducts.Count,
+
+                    products =
+                        simplifiedProducts
+                },
+                new JsonSerializerOptions
+                {
+                    Encoder =
+                        System.Text.Encodings.Web
+                            .JavaScriptEncoder
+                            .UnsafeRelaxedJsonEscaping,
+
+                    WriteIndented = true
+                });
+        }
+        catch (JsonException ex)
+        {
+            return StatusCode(500, new
+            {
+                success = false,
+                message =
+                    "Помилка обробки JSON від Silpo MCP.",
+                error = ex.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                success = false,
+                message =
+                    "Помилка отримання товарів Silpo.",
+                error = ex.Message
+            });
+        }
+
+    }
+    
+    [Route("api/silpo")]
+    [HttpGet("status")]
+    public IActionResult Status()
+    {
+        var authenticated =
+            !string.IsNullOrWhiteSpace(_tokenStore.AccessToken);
+
+        return Ok(new
+        {
+            authenticated
+        });
     }
 }
+

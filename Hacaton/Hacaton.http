@@ -1,6 +1,0 @@
-@Hacaton_HostAddress = http://localhost:5068
-
-GET {{Hacaton_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

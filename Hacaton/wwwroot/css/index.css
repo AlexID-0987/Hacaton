@@ -106,6 +106,17 @@ body {
         .promo-card summary::-webkit-details-marker {
             display: none;
         }
+.promo-badge-hero{
+    display: inline-block;
+    background: rgba(255,255,255,0.18);
+    border-radius: 999px;
+    padding: 7px 0px;
+    width: fit-content;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing: 0.02em;
+}
 
 .promo-badge {
     display: inline-block;
@@ -113,7 +124,7 @@ body {
     border-radius: 999px;
     padding: 7px 12px;
     width: fit-content;
-    font-size: 0.75rem;
+    font-size: 20px;
     font-weight: 700;
     margin-bottom: 12px;
     letter-spacing: 0.02em;
@@ -361,3 +372,45 @@ textarea {
         width: 100%;
     }
 }
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.login-btn {
+    border: none;
+    border-radius: 12px;
+    padding: 10px 18px;
+    background: var(--primary);
+    color: white;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+    .login-btn:hover {
+        background: var(--primary-dark);
+    }
+
+    .login-btn.logged-in {
+        background: var(--soft-green);
+        color: var(--primary-dark);
+    }
+
+.btn-primary {
+    
+    
+    border-radius: 14px;
+    padding: 12px 20px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+  
+
+    

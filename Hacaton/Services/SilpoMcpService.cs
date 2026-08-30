@@ -279,27 +279,146 @@ public class SilpoMcpService
             });
     }
 
-    public Task<string> FindProductsAsync(
-        string accessToken,
-        string branchId,
-        string deliveryType,
-        string timeslotStart,
-        string timeslotEnd,
-        string[] products)
+    
+public async Task<string> FindProductsAsync(
+    string accessToken,
+    string branchId,
+    string deliveryType,
+    string timeslotStart,
+    string timeslotEnd,
+    string[] products)
     {
-        return CallToolAsync(
-            accessToken,
-            7,
-            "silpo_find_products_batch",
-            new
+        _httpClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue(
+                "Bearer", 
+                accessToken);
+
+        var request = new
+        {
+            jsonrpc = "2.0",
+            id = 7,
+            method = "tools/call",
+            @params = new 
             {
-                branchId,
-                deliveryType,
-                timeslotStart,
-                timeslotEnd,
-                products
+                name = "silpo_find_products_batch",
+                arguments = new
+                {
+                    branchId,
+                    deliveryType,
+                    timeslotStart,
+                    timeslotEnd,
+                    products
+                }
+            }
+        };
+
+        var json =
+            JsonSerializer.Serialize(request);
+
+        using var content =
+            new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json");
+
+        var response =
+            await _httpClient.PostAsync(
+                McpUrl,
+                content);
+
+        var responseBody =
+            await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                httpStatus = (int)response.StatusCode,
+                error = responseBody
             });
+        }
+
+        try
+        {
+            using var document =
+                JsonDocument.Parse(responseBody);
+
+            var root =
+                document.RootElement;
+
+            // MCP result
+            if (!root.TryGetProperty(
+                    "result",
+                    out var result))
+            {
+                return responseBody;
+            }
+
+            // MCP content
+            if (!result.TryGetProperty(
+                    "content",
+                    out var contentArray))
+            {
+                return responseBody;
+            }
+
+            if (contentArray.GetArrayLength() == 0)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    message =
+                        "Silpo MCP повернув порожній результат."
+                });
+            }
+
+            // Беремо text
+            var text =
+                contentArray[0]
+                    .GetProperty("text")
+                    .GetString();
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    message =
+                        "Silpo MCP не повернув текст результату."
+                });
+            }
+
+            // text сам є JSON
+            using var innerDocument =
+                JsonDocument.Parse(text);
+
+            // КЛЮЧОВИЙ МОМЕНТ:
+            // клонуємо JsonElement ДО закриття document
+            var cleanResult =
+                innerDocument.RootElement.Clone();
+
+            return JsonSerializer.Serialize(
+                cleanResult,
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+        }
+        catch (JsonException ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message =
+                    "Не вдалося розібрати JSON від Silpo MCP.",
+                error = ex.Message,
+                raw = responseBody
+            });
+        }
     }
+
+
     public async Task<string> GetDeliveryTypesAsync(string accessToken)
     {
         _httpClient.DefaultRequestHeaders.Authorization =
