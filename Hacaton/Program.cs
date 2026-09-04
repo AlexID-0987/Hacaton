@@ -10,7 +10,7 @@ public class Program
 
         builder.Services.AddControllers();
         builder.Services.AddEndpointsApiExplorer();
-        
+        builder.Services.AddHttpClient<AiAgentService>();
         builder.Services.AddOpenApi();
 
         // Silpo OAuth

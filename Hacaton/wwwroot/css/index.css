@@ -248,6 +248,7 @@ body {
         font-size: 0.8rem;
         font-weight: 700;
     }
+    
 
 .input-wrap {
     display: flex;
@@ -310,11 +311,15 @@ textarea {
 }
 
 .product-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     background: white;
     border: 1px solid var(--line);
     border-radius: 16px;
     overflow: hidden;
     box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+    text-align: center;
 }
 
     .product-card img {
@@ -411,6 +416,55 @@ textarea {
     white-space: nowrap;
 }
 
-  
 
-    
+.product-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px;
+    margin-top: 18px;
+    align-items: stretch;
+}
+
+
+
+.product-image-wrapper {
+    height: 220px;
+    flex-shrink: 0;
+}
+
+.product-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: #f3f4f6;
+}
+
+
+
+.product-name {
+    font-weight: 700;
+    margin: 0 0 6px 0;
+    /* резервуємо місце під 2 рядки */
+    min-height: 44px;
+}
+
+.product-price {
+    margin-bottom: 8px;
+}
+
+.product-meta {
+    margin-bottom: 8px;
+}
+
+.product-stock {
+    margin-bottom: 8px;
+}
+
+
+
+
+.btn-info {
+    margin-top: auto;
+    align-self:center;
+}

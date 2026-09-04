@@ -11,7 +11,7 @@
 </head>
 
 <body>
-
+    
     <!-- ================= HEADER ================= -->
 
     <header class="topbar">
@@ -268,9 +268,34 @@
                  class="result-box"
                  aria-live="polite">
 
-                
+
             </div>
-            
+            <div id="cartBox" class="cart-box">
+                <div class="cart-header">
+                    <h3>🛒 Кошик</h3>
+                    <button id="clearCartBtn"
+                            type="button"
+                            class="btn btn-outline-secondary btn-sm">
+                        Очистити
+                    </button>
+                </div>
+
+                <div id="cartItems"></div>
+
+                <div class="cart-footer">
+                    <div>
+                        <strong>Разом:</strong>
+                        <span id="cartTotal">0.00 грн</span>
+                    </div>
+
+                    <button id="checkoutBtn"
+                            type="button"
+                            class="send-btn"
+                            disabled>
+                        Оформити замовлення
+                    </button>
+                </div>
+            </div>
             <div class="delivery-box" id="deliveryBox" style="display:none;">
 
                 <div class="delivery-header">
@@ -314,7 +339,7 @@
                 </div>
 
             </div>
-            
+
 
         </section>
 
@@ -349,7 +374,7 @@
 
     <!-- ================= JAVASCRIPT ================= -->
 
-    <script src="/js/index.js"></script>
+    <script src="/js/index.js?v=999999"></script>
 
 </body>
 </html>
