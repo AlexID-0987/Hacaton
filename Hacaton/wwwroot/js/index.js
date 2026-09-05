@@ -581,9 +581,13 @@ async function askAssistant() {
 
 let cart = [];
 
+
+// ======================================================
+// ADD TO CART
+// ======================================================
+
 function addToCartByName(productName) {
 
-    // Знаходимо товар серед останніх отриманих товарів
     const product = currentProducts.find(
         p => (p.name ?? p.Name ?? "") === productName
     );
@@ -598,11 +602,18 @@ function addToCartByName(productName) {
     );
 
     if (existing) {
+
         existing.quantity++;
+
     } else {
+
         cart.push({
             name: productName,
-            price: Number(product.price ?? product.Price ?? 0),
+            price: Number(
+                product.price ??
+                product.Price ??
+                0
+            ),
             quantity: 1
         });
     }
@@ -612,95 +623,625 @@ function addToCartByName(productName) {
 
 
 // ======================================================
-// CART RENDER
+// RENDER CART
 // ======================================================
 
 function renderCart() {
 
-    const cartBox = document.getElementById("cartBox");
+    const cartBox =
+        document.getElementById("cartBox");
 
     if (!cartBox) {
         console.error("cartBox не знайдений");
         return;
     }
 
+    // КОШИК ПОРОЖНІЙ
     if (cart.length === 0) {
 
         cartBox.innerHTML = `
             <h3>🛒 Кошик</h3>
+
             <p>Кошик порожній</p>
-            <strong>Разом: 0.00 грн</strong>
+
+            <strong>
+                Разом: 0.00 грн
+            </strong>
         `;
 
         return;
     }
 
+
     let total = 0;
+    let quantityTotal = 0;
 
-    const itemsHtml = cart.map((item, index) => {
 
-        const itemTotal =
-            item.price * item.quantity;
+    const itemsHtml = cart.map(
+        (item, index) => {
 
-        total += itemTotal;
+            const itemTotal =
+                item.price * item.quantity;
 
-        return `
-            <div class="cart-item">
+            total += itemTotal;
+            quantityTotal += item.quantity;
 
-                <div>
-                    <strong>
-                        ${escapeHtml(item.name)}
-                    </strong>
 
-                    <div>
-                        ${formatPrice(item.price)}
-                        × ${item.quantity}
+            return `
+                <div class="cart-item">
+
+                    <div class="cart-item-info">
+
+                        <strong>
+                            ${escapeHtml(item.name)}
+                        </strong>
+
+                        <div>
+                            ${formatPrice(item.price)}
+                        </div>
+
                     </div>
+
+
+                    <div class="cart-item-controls">
+
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            data-cart-minus="${index}">
+                            −
+                        </button>
+
+
+                        <span class="cart-quantity">
+                            ${item.quantity}
+                        </span>
+
+
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            data-cart-plus="${index}">
+                            +
+                        </button>
+
+
+                        <strong class="cart-item-total">
+                            ${formatPrice(itemTotal)}
+                        </strong>
+
+
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-danger"
+                            data-cart-remove="${index}">
+                            ✕
+                        </button>
+
+                    </div>
+
                 </div>
+            `;
+        }
+    ).join("");
 
-                <div>
-                    <strong>
-                        ${formatPrice(itemTotal)}
-                    </strong>
-
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-danger"
-                        data-cart-remove="${index}">
-                        ✕
-                    </button>
-                </div>
-
-            </div>
-        `;
-    }).join("");
 
     cartBox.innerHTML = `
-        <h3>🛒 Кошик</h3>
 
-        ${itemsHtml}
+        <h3>
+            🛒 Кошик
+            <span>(${quantityTotal})</span>
+        </h3>
+
+
+        <div class="cart-items">
+
+            ${itemsHtml}
+
+        </div>
+
 
         <div class="cart-total">
+
             <strong>
                 Разом: ${formatPrice(total)}
             </strong>
+
         </div>
 
-        <button
-            type="button"
-            class="btn btn-danger"
-            id="clearCartBtn">
-            Очистити
-        </button>
 
-        <button
-            type="button"
-            class="btn btn-primary">
-            Оформити замовлення
-        </button>
+        <div class="cart-actions">
+
+            <button
+                type="button"
+                class="btn btn-outline-secondary"
+                id="clearCartBtn">
+                Очистити
+            </button>
+
+
+            <button
+                type="button"
+                class="btn btn-primary"
+                id="checkoutBtn">
+                Оформити замовлення
+            </button>
+
+        </div>
     `;
-}
 
+
+    // ==================================================
+    // PLUS
+    // ==================================================
+
+    cartBox
+        .querySelectorAll("[data-cart-plus]")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                function () {
+
+                    const index =
+                        Number(
+                            this.dataset.cartPlus
+                        );
+
+                    if (cart[index]) {
+
+                        cart[index].quantity++;
+
+                        renderCart();
+                    }
+                }
+            );
+        });
+
+
+    // ==================================================
+    // MINUS
+    // ==================================================
+
+    cartBox
+        .querySelectorAll("[data-cart-minus]")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                function () {
+
+                    const index =
+                        Number(
+                            this.dataset.cartMinus
+                        );
+
+                    if (!cart[index]) {
+                        return;
+                    }
+
+
+                    cart[index].quantity--;
+
+
+                    if (cart[index].quantity <= 0) {
+
+                        cart.splice(index, 1);
+                    }
+
+
+                    renderCart();
+                }
+            );
+        });
+
+
+    // ==================================================
+    // REMOVE
+    // ==================================================
+
+    cartBox
+        .querySelectorAll("[data-cart-remove]")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                function () {
+
+                    const index =
+                        Number(
+                            this.dataset.cartRemove
+                        );
+
+                    if (cart[index]) {
+
+                        cart.splice(index, 1);
+
+                        renderCart();
+                    }
+                }
+            );
+        });
+
+
+    // ==================================================
+    // CLEAR CART
+    // ==================================================
+
+    const clearCartBtn =
+        document.getElementById("clearCartBtn");
+
+
+    if (clearCartBtn) {
+
+        clearCartBtn.addEventListener(
+            "click",
+            function () {
+
+                cart = [];
+
+                renderCart();
+            }
+        );
+    }
+
+
+    // ==================================================
+    // CHECKOUT
+    // ==================================================
+
+    const checkoutBtn =
+        document.getElementById("checkoutBtn");
+
+
+    if (checkoutBtn) {
+
+        checkoutBtn.addEventListener(
+            "click",
+            function () {
+
+                if (cart.length === 0) {
+                    alert("Кошик порожній.");
+                    return;
+                }
+
+                showCheckoutForm();
+            }
+        );
+    }
+}
+// ======================================================
+// CHECKOUT FORM
+// ======================================================
+
+function showCheckoutForm() {
+
+    const cartBox =
+        document.getElementById("cartBox");
+
+    if (!cartBox) {
+        return;
+    }
+
+    let total = 0;
+
+    cart.forEach(item => {
+
+        total +=
+            item.price *
+            item.quantity;
+
+    });
+
+    cartBox.innerHTML = `
+
+        <div class="checkout-form">
+
+            <h3>
+                📦 Оформлення замовлення
+            </h3>
+
+            <div class="mb-3">
+
+                <label class="form-label">
+                    Ім'я
+                </label>
+
+                <input
+                    type="text"
+                    class="form-control"
+                    id="customerName"
+                    placeholder="Ваше ім'я"
+                >
+
+            </div>
+
+
+            <div class="mb-3">
+
+                <label class="form-label">
+                    Телефон
+                </label>
+
+                <input
+                    type="tel"
+                    class="form-control"
+                    id="customerPhone"
+                    placeholder="+380..."
+                >
+
+            </div>
+
+
+            <div class="mb-3">
+
+                <label class="form-label">
+                    Адреса доставки
+                </label>
+
+                <input
+                    type="text"
+                    class="form-control"
+                    id="deliveryAddress"
+                    placeholder="Введіть адресу"
+                >
+
+            </div>
+
+
+            <div class="cart-total mb-3">
+
+                <strong>
+                    До сплати:
+                    ${formatPrice(total)}
+                </strong>
+
+            </div>
+
+
+            <div class="d-flex gap-2">
+
+                <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    id="backToCartBtn">
+
+                    ← Назад
+
+                </button>
+
+
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="confirmOrderBtn">
+
+                    Підтвердити замовлення
+
+                </button>
+
+            </div>
+
+        </div>
+
+    `;
+
+
+    // ==========================================
+    // BACK TO CART
+    // ==========================================
+
+    const backToCartBtn =
+        document.getElementById(
+            "backToCartBtn"
+        );
+
+    if (backToCartBtn) {
+
+        backToCartBtn.addEventListener(
+            "click",
+            function () {
+
+                renderCart();
+
+            }
+        );
+    }
+
+
+    // ==========================================
+    // CONFIRM ORDER
+    // ==========================================
+
+    const confirmOrderBtn =
+        document.getElementById(
+            "confirmOrderBtn"
+        );
+
+    if (confirmOrderBtn) {
+
+        confirmOrderBtn.addEventListener(
+            "click",
+            function () {
+
+                const name =
+                    document
+                        .getElementById(
+                            "customerName"
+                        )
+                        .value
+                        .trim();
+
+                const phone =
+                    document
+                        .getElementById(
+                            "customerPhone"
+                        )
+                        .value
+                        .trim();
+
+                const address =
+                    document
+                        .getElementById(
+                            "deliveryAddress"
+                        )
+                        .value
+                        .trim();
+
+
+                if (!name) {
+
+                    alert(
+                        "Введіть ваше ім'я."
+                    );
+
+                    return;
+                }
+
+
+                if (!phone) {
+
+                    alert(
+                        "Введіть номер телефону."
+                    );
+
+                    return;
+                }
+
+
+                if (!address) {
+
+                    alert(
+                        "Введіть адресу доставки."
+                    );
+
+                    return;
+                }
+
+
+                const order = {
+
+                    customerName: name,
+
+                    phone: phone,
+
+                    address: address,
+
+                    items: cart,
+
+                    total: total
+
+                };
+
+
+                console.log(
+                    "ГОТОВЕ ЗАМОВЛЕННЯ:",
+                    order
+                );
+
+
+                showOrderSuccess(
+                    order
+                );
+
+            }
+        );
+    }
+}
+// ======================================================
+// ORDER SUCCESS
+// ======================================================
+
+function showOrderSuccess(order) {
+
+    const cartBox =
+        document.getElementById("cartBox");
+
+    if (!cartBox) {
+        return;
+    }
+
+    cartBox.innerHTML = `
+
+        <div class="alert alert-success">
+
+            <h3>
+                ✅ Замовлення оформлено!
+            </h3>
+
+            <p>
+
+                Дякуємо,
+                <strong>
+                    ${escapeHtml(
+        order.customerName
+    )}
+                </strong>!
+
+            </p>
+
+            <p>
+
+                Сума замовлення:
+
+                <strong>
+
+                    ${formatPrice(
+        order.total
+    )}
+
+                </strong>
+
+            </p>
+
+            <p>
+
+                Адреса доставки:
+
+                <strong>
+
+                    ${escapeHtml(
+        order.address
+    )}
+
+                </strong>
+
+            </p>
+
+            <button
+                type="button"
+                class="btn btn-primary"
+                id="newOrderBtn">
+
+                Нове замовлення
+
+            </button>
+
+        </div>
+
+    `;
+
+
+    cart = [];
+
+
+    const newOrderBtn =
+        document.getElementById(
+            "newOrderBtn"
+        );
+
+    if (newOrderBtn) {
+
+        newOrderBtn.addEventListener(
+            "click",
+            function () {
+
+                renderCart();
+
+            }
+        );
+    }
+}
 // ======================================================
 // EVENTS
 // ======================================================

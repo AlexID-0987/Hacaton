@@ -468,3 +468,45 @@ textarea {
     margin-top: auto;
     align-self:center;
 }
+.cart-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.cart-item-info {
+    flex: 1;
+}
+
+.cart-item-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.cart-quantity {
+    min-width: 30px;
+    text-align: center;
+    font-weight: 700;
+}
+
+.cart-item-total {
+    min-width: 90px;
+    text-align: right;
+}
+
+.cart-total {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-size: 1.1rem;
+}
+
+.cart-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
