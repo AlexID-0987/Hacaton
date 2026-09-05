@@ -1,0 +1,15 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Build
+**/bin/
+**/obj/
+
+# ASP.NET configuration with secrets
+**/appsettings.json
+**/appsettings.*.json
+
+# Keep example configuration
+!**/appsettings.example.json
