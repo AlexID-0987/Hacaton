@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Hacaton.Services;
@@ -17,15 +18,6 @@ public class AiAgentService
     private const string OpenRouterUrl =
         "https://openrouter.ai/api/v1/chat/completions";
 
-    private const string DefaultModel =
-        "google/gemma-4-26b-a4b:free";
-
-    private const string BranchId =
-        "1edb6b38-214b-66d6-a8e0-7f2fdd178564";
-
-    private const string DeliveryType =
-        "DeliveryHome";
-
     public AiAgentService(
         HttpClient httpClient,
         IConfiguration configuration,
@@ -38,1292 +30,1224 @@ public class AiAgentService
         _tokenStore = tokenStore;
     }
 
-    public async Task<string> AskAsync(string userMessage)
+    public async Task<string> AskAsync(string userMessage, string? address)
     {
         if (string.IsNullOrWhiteSpace(userMessage))
         {
-            return CreateResponse(
-                false,
-                "Напишіть, що ви хочете купити.",
-                0,
-                0,
-                new List<SilpoProduct>());
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Повідомлення не може бути порожнім."
+            });
         }
 
         var accessToken = _tokenStore.AccessToken;
 
-        if (string.IsNullOrWhiteSpace(accessToken))
+        if (string.IsNullOrWhiteSpace(address))
         {
-            return CreateResponse(
-                false,
-                "Спочатку авторизуйтесь через Silpo.",
-                0,
-                0,
-                new List<SilpoProduct>());
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Вкажіть адресу доставки Silpo."
+            });
         }
 
-        decimal budget = ExtractBudget(userMessage);
-
-        if (budget <= 0)
-            budget = 1000;
-
-        var productNames = ExtractProductNames(userMessage);
-
-        if (productNames.Count == 0)
+        if (string.IsNullOrWhiteSpace(address))
         {
-            return CreateResponse(
-                true,
-                "Напишіть, які продукти потрібно підібрати. Наприклад: Підбери продукти для сніданку до 350 грн.",
-                budget,
-                0,
-                new List<SilpoProduct>());
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Вкажіть адресу доставки Silpo."
+            });
         }
-
-        string timeslotsRaw;
 
         try
         {
-            timeslotsRaw =
+            // =====================================================
+            // 1. ВИЗНАЧАЄМО ФІЛІЮ SILPO
+            // =====================================================
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "========== INITIALIZE SILPO LOCATION ==========");
+
+            Console.WriteLine(
+                $"Address: {address}");
+
+            Console.WriteLine(
+                "================================================");
+
+            await _silpoMcpService
+                .InitializeBranchByAddressAsync(
+                    accessToken,
+                    address);
+
+            Console.WriteLine(
+                $"Selected BranchId: {_tokenStore.BranchId}");
+
+            // =====================================================
+            // 2. ДАЛІ ВЖЕ ЙДЕ ТВОЯ ІСНУЮЧА ЛОГІКА
+            // =====================================================
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "========== AI REQUEST ==========");
+
+            Console.WriteLine(
+                userMessage);
+
+            Console.WriteLine(
+                $"BranchId: {_tokenStore.BranchId}");
+
+            Console.WriteLine(
+                "===============================");
+            // ---------------------------------------------------------
+
+            var localRequest =
+                TryParseSimpleProductRequest(userMessage);
+
+            ProductRequest? productRequest;
+
+            if (localRequest != null)
+            {
+                productRequest = localRequest;
+
+                Console.WriteLine("LOCAL PRODUCT PARSER:");
+                Console.WriteLine(
+                    $"Products: {string.Join(", ", productRequest.Products)}");
+                Console.WriteLine(
+                    $"Budget: {productRequest.Budget}");
+            }
+            else
+            {
+                productRequest =
+                    await ExtractProductRequestAsync(userMessage);
+            }
+
+            // ---------------------------------------------------------
+            // 2. Якщо це не запит товарів — звичайна відповідь AI.
+            // ---------------------------------------------------------
+
+            if (productRequest == null ||
+                !productRequest.IsProductRequest ||
+                productRequest.Products.Count == 0)
+            {
+                var generalAnswer =
+                    await AskGeneralAiAsync(userMessage);
+
+                return JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    answer = generalAnswer,
+                    branchId = _tokenStore.BranchId
+                });
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("========== PRODUCT REQUEST ==========");
+            Console.WriteLine(
+                $"Products: {string.Join(", ", productRequest.Products)}");
+            Console.WriteLine($"Budget: {productRequest.Budget}");
+            Console.WriteLine("=====================================");
+            Console.WriteLine();
+
+            // ---------------------------------------------------------
+            // 3. Отримуємо доступні слоти доставки.
+            // ---------------------------------------------------------
+
+            var timeSlotsRaw =
                 await _silpoMcpService.GetTimeSlotsAsync(
                     accessToken,
-                    BranchId,
-                    DeliveryType);
-        }
-        catch (Exception ex)
-        {
-            return CreateResponse(
-                false,
-                "Помилка отримання часових слотів Silpo.",
-                budget,
-                0,
-                new List<SilpoProduct>(),
-                ex.Message);
-        }
+                    "DeliveryHome");
 
-        var slot = FindFirstAvailableSlot(timeslotsRaw);
+            var timeSlot =
+                ExtractFirstAvailableTimeSlot(timeSlotsRaw);
 
-        if (slot == null)
-        {
-            return CreateResponse(
-                false,
-                "Не знайдено доступного часу доставки Silpo.",
-                budget,
-                0,
-                new List<SilpoProduct>());
-        }
+            if (timeSlot == null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    message =
+                        "Для вашої адреси зараз немає доступного часу доставки.",
+                    branchId = _tokenStore.BranchId
+                });
+            }
 
-        string productsRaw;
+            Console.WriteLine();
+            Console.WriteLine("========== TIME SLOT ==========");
+            Console.WriteLine($"Date:  {timeSlot.Date}");
+            Console.WriteLine($"Start: {timeSlot.StartIso}");
+            Console.WriteLine($"End:   {timeSlot.EndIso}");
+            Console.WriteLine($"Time:  {timeSlot.DisplayTime}");
+            Console.WriteLine("==============================");
+            Console.WriteLine();
 
-        try
-        {
-            productsRaw =
+            // ---------------------------------------------------------
+            // 4. Запитуємо товари саме для BranchId + timeslot.
+            // ---------------------------------------------------------
+
+            var productsRaw =
                 await _silpoMcpService.FindProductsAsync(
                     accessToken,
-                    BranchId,
-                    DeliveryType,
-                    slot.Value.Start,
-                    slot.Value.End,
-                    productNames.ToArray());
+                    "DeliveryHome",
+                    timeSlot.StartIso,
+                    timeSlot.EndIso,
+                    productRequest.Products.ToArray());
+
+            Console.WriteLine();
+            Console.WriteLine("========== SILPO PRODUCTS ==========");
+            Console.WriteLine(productsRaw);
+            Console.WriteLine("====================================");
+            Console.WriteLine();
+
+            // ---------------------------------------------------------
+            // 5. Парсимо реальні товари Silpo.
+            // ---------------------------------------------------------
+
+            var products =
+                ParseProducts(productsRaw);
+
+            if (products.Count == 0)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    message =
+                        "Silpo не повернув товарів за вашим запитом.",
+                    branchId = _tokenStore.BranchId,
+                    requestedProducts = productRequest.Products
+                });
+            }
+
+            var availableProducts =
+                products
+                    .Where(x => x.Available && x.Stock > 0)
+                    .ToList();
+
+            if (availableProducts.Count == 0)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    message =
+                        "Товари знайдені, але зараз їх немає в наявності.",
+                    branchId = _tokenStore.BranchId
+                });
+            }
+
+            // ---------------------------------------------------------
+            // 6. Якщо заданий бюджет, відбираємо товари до бюджету.
+            //
+            //    Для одного товару це дуже просто:
+            //    беремо найдешевший, який вкладається в бюджет.
+            //
+            //    Для кількох товарів AI вже отримає список реальних
+            //    товарів і підбере комбінацію.
+            // ---------------------------------------------------------
+
+            var productsForAi = availableProducts
+                .OrderBy(x => x.Price)
+                .Take(100)
+                .ToList();
+
+            if (productRequest.Budget.HasValue &&
+                productRequest.Products.Count == 1)
+            {
+                var budgetProducts =
+                    productsForAi
+                        .Where(x =>
+                            x.Price <= productRequest.Budget.Value)
+                        .ToList();
+
+                if (budgetProducts.Count == 0)
+                {
+                    var cheapest =
+                        productsForAi
+                            .OrderBy(x => x.Price)
+                            .First();
+
+                    return JsonSerializer.Serialize(new
+                    {
+                        success = true,
+                        answer =
+                            $"Найдешевший доступний варіант — {cheapest.Name}, " +
+                            $"але він коштує {cheapest.Price:0.00} грн, " +
+                            $"що перевищує ваш бюджет " +
+                            $"{productRequest.Budget.Value:0.00} грн.",
+                        branchId = _tokenStore.BranchId,
+                        deliveryType = "DeliveryHome",
+                        timeslot = new
+                        {
+                            date = timeSlot.Date,
+                            start = timeSlot.StartIso,
+                            end = timeSlot.EndIso,
+                            time = timeSlot.DisplayTime
+                        },
+                        products = new[]
+                        {
+                            new
+                            {
+                                name = cheapest.Name,
+                                price = cheapest.Price,
+                                stock = cheapest.Stock,
+                                available = cheapest.Available,
+                                displayRatio = cheapest.DisplayRatio,
+                                image = cheapest.Image,
+                                externalProductId =
+                                    cheapest.ExternalProductId
+                            }
+                        }
+                    });
+                }
+
+                productsForAi =
+                    budgetProducts
+                        .OrderBy(x => x.Price)
+                        .Take(50)
+                        .ToList();
+            }
+
+            // ---------------------------------------------------------
+            // 7. Формуємо компактний список для OpenRouter.
+            // ---------------------------------------------------------
+
+            var productsJson =
+                JsonSerializer.Serialize(
+                    productsForAi.Select(x => new
+                    {
+                        name = x.Name,
+                        price = x.Price,
+                        stock = x.Stock,
+                        available = x.Available,
+                        package = x.DisplayRatio,
+                        image = x.Image
+                    }),
+                    new JsonSerializerOptions
+                    {
+                        WriteIndented = false
+                    });
+
+            var budgetText =
+                productRequest.Budget.HasValue
+                    ? productRequest.Budget.Value
+                        .ToString(
+                            "0.00",
+                            CultureInfo.InvariantCulture)
+                    : "не вказаний";
+
+            // ---------------------------------------------------------
+            // 8. AI отримує ТІЛЬКИ реальні товари Silpo.
+            // ---------------------------------------------------------
+
+            var systemPrompt = """
+Ти — AI-помічник для покупок у Silpo.
+
+Тобі переданий список РЕАЛЬНИХ товарів, отриманих із Silpo MCP.
+
+КРИТИЧНІ ПРАВИЛА:
+
+1. Використовуй тільки товари з переданого списку.
+2. Не вигадуй товари.
+3. Не вигадуй ціни.
+4. Не вигадуй залишки.
+5. Не вигадуй фасування.
+6. price — реальна ціна товару у гривнях.
+7. stock — реальний залишок.
+8. available=true означає, що товар доступний.
+9. Якщо користувач вказав бюджет — не перевищуй його, якщо це можливо.
+10. Якщо бюджет неможливо виконати — чесно скажи про це.
+11. Якщо користувач просить один товар — запропонуй найкращий доступний варіант.
+12. Якщо користувач просить кілька товарів — підбери товари зі списку.
+13. Не показуй JSON.
+14. Не показуй internal ID.
+15. Не показуй externalProductId.
+16. Відповідай українською.
+17. Будь коротким і зрозумілим.
+18. Обов'язково вказуй ціну.
+19. Якщо доречно — вказуй фасування та залишок.
+
+Формат відповіді:
+
+🛒 Знайшов для вас:
+
+• Назва товару — 74,49 грн (870 г)
+  В наявності: 18 шт.
+
+💰 Разом: 74,49 грн
+""";
+
+            var userPrompt = $"""
+Запит користувача:
+
+{userMessage}
+
+Філія Silpo:
+
+{_tokenStore.BranchId}
+
+Тип доставки:
+
+DeliveryHome
+
+Час доставки:
+
+{timeSlot.DisplayTime}
+
+Максимальний бюджет:
+
+{budgetText} грн
+
+Реальні товари Silpo:
+
+{productsJson}
+
+Сформуй фінальну відповідь українською.
+
+Використовуй тільки товари з цього списку.
+Не вигадуй ціни, залишки або товари.
+""";
+
+            var aiAnswer =
+                await CallOpenRouterAsync(
+                    systemPrompt,
+                    userPrompt);
+
+            // ---------------------------------------------------------
+            // 9. Фінальна відповідь API.
+            // ---------------------------------------------------------
+
+            return JsonSerializer.Serialize(
+                new
+                {
+                    success = true,
+                    answer = aiAnswer,
+                    branchId = _tokenStore.BranchId,
+                    deliveryType = "DeliveryHome",
+                    timeslot = new
+                    {
+                        date = timeSlot.Date,
+                        start = timeSlot.StartIso,
+                        end = timeSlot.EndIso,
+                        time = timeSlot.DisplayTime
+                    },
+                    products =
+                        productsForAi.Select(x => new
+                        {
+                            name = x.Name,
+                            price = x.Price,
+                            stock = x.Stock,
+                            available = x.Available,
+                            displayRatio = x.DisplayRatio,
+                            image = x.Image,
+                            externalProductId =
+                                x.ExternalProductId
+                        })
+                },
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
         }
         catch (Exception ex)
         {
-            return CreateResponse(
-                false,
-                "Помилка отримання товарів Silpo.",
-                budget,
-                0,
-                new List<SilpoProduct>(),
-                ex.Message);
+            Console.WriteLine();
+            Console.WriteLine("========== AI ERROR ==========");
+            Console.WriteLine(ex);
+            Console.WriteLine("==============================");
+            Console.WriteLine();
+
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                message = "Помилка AI Assistant.",
+                error = ex.Message
+            });
         }
-
-        var products = ParseProducts(productsRaw);
-
-        if (products.Count == 0)
-        {
-            return CreateResponse(
-                false,
-                "Silpo не повернув товарів за вашим запитом.",
-                budget,
-                0,
-                new List<SilpoProduct>());
-        }
-
-        var selectedItems =
-            SelectProductsWithinBudget(
-                products,
-                productNames,
-                budget);
-
-        var total =
-            selectedItems.Sum(x => x.Price);
-
-        string fallbackMessage;
-
-        if (selectedItems.Count == 0)
-        {
-            fallbackMessage =
-                $"Не вдалося підібрати товари в межах {budget:0.##} грн.";
-        }
-        else
-        {
-            fallbackMessage =
-                $"Підібрано {selectedItems.Count} товарів на суму {total:0.##} грн. Бюджет: {budget:0.##} грн.";
-        }
-
-        var aiMessage =
-            await GenerateAiMessageAsync(
-                userMessage,
-                selectedItems,
-                budget,
-                fallbackMessage);
-
-        var message =
-            string.IsNullOrWhiteSpace(aiMessage)
-                ? fallbackMessage
-                : aiMessage;
-
-        return CreateResponse(
-            true,
-            message,
-            budget,
-            total,
-            selectedItems);
     }
 
-    // =========================================================
-    // ВИЗНАЧЕННЯ ТОВАРІВ ІЗ ЗАПИТУ КОРИСТУВАЧА
-    // =========================================================
+    // ================================================================
+    // ЛОКАЛЬНЕ РОЗПІЗНАВАННЯ ПРОСТИХ ЗАПИТІВ
+    // ================================================================
 
-    private List<string> ExtractProductNames(string message)
+    private ProductRequest? TryParseSimpleProductRequest(
+        string userMessage)
     {
-        var result = new List<string>();
+        var text =
+            userMessage
+                .Trim()
+                .ToLowerInvariant();
 
-        var text = message.ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
 
-        // =====================================================
-        // СНІДАНОК
-        // =====================================================
-
-        if (text.Contains("снідан"))
-        {
-            AddIfMissing(result, "Яйця");
-            AddIfMissing(result, "Молоко");
-            AddIfMissing(result, "Хліб");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Масло");
-            AddIfMissing(result, "Вівсянка");
-            AddIfMissing(result, "Банан");
-            AddIfMissing(result, "Йогурт");
-        }
-
-
-        // =====================================================
-        // ОБІД
-        // =====================================================
-
-        if (text.Contains("обід"))
-        {
-            AddIfMissing(result, "Курка");
-            AddIfMissing(result, "Картопля");
-            AddIfMissing(result, "Помідори");
-            AddIfMissing(result, "Огірки");
-            AddIfMissing(result, "Хліб");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Йогурт");
-        }
-
-
-        // =====================================================
-        // ВЕЧЕРЯ
-        // =====================================================
-
-        if (text.Contains("вечер"))
-        {
-            AddIfMissing(result, "Курка");
-            AddIfMissing(result, "Картопля");
-            AddIfMissing(result, "Помідори");
-            AddIfMissing(result, "Огірки");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Йогурт");
-            AddIfMissing(result, "Овочі");
-        }
-
-
-        // =====================================================
-        // ЗДОРОВЕ ХАРЧУВАННЯ
-        // =====================================================
-
-        if (text.Contains("здоров"))
-        {
-            AddIfMissing(result, "Вівсянка");
-            AddIfMissing(result, "Яблука");
-            AddIfMissing(result, "Банан");
-            AddIfMissing(result, "Йогурт");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Огірки");
-            AddIfMissing(result, "Помідори");
-        }
-
-
-        // =====================================================
-        // ЗДОРОВІ ПРОДУКТИ
-        // =====================================================
-
-        if (text.Contains("корисн"))
-        {
-            AddIfMissing(result, "Вівсянка");
-            AddIfMissing(result, "Яблука");
-            AddIfMissing(result, "Банан");
-            AddIfMissing(result, "Йогурт");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Огірки");
-            AddIfMissing(result, "Помідори");
-        }
-
-
-        // =====================================================
-        // ПІКНІК
-        // =====================================================
-
-        if (text.Contains("пікнік") ||
-            text.Contains("пікніку"))
-        {
-            AddIfMissing(result, "Хліб");
-            AddIfMissing(result, "Сир");
-            AddIfMissing(result, "Курка");
-            AddIfMissing(result, "Огірки");
-            AddIfMissing(result, "Помідори");
-            AddIfMissing(result, "Яблука");
-            AddIfMissing(result, "Йогурт");
-        }
-
-
-        // =====================================================
-        // ОКРЕМІ ПРОДУКТИ
-        // =====================================================
-
-        if (text.Contains("яйц"))
-            AddIfMissing(result, "Яйця");
-
-        if (text.Contains("молок"))
-            AddIfMissing(result, "Молоко");
-
-        if (text.Contains("хліб"))
-            AddIfMissing(result, "Хліб");
-
-        if (text.Contains("сир"))
-            AddIfMissing(result, "Сир");
-
-        if (text.Contains("масл"))
-            AddIfMissing(result, "Масло");
-
-        if (text.Contains("йогурт"))
-            AddIfMissing(result, "Йогурт");
-
-        if (text.Contains("вівся"))
-            AddIfMissing(result, "Вівсянка");
-
-        if (text.Contains("кав"))
-            AddIfMissing(result, "Кава");
-
-        if (text.Contains("чай"))
-            AddIfMissing(result, "Чай");
-
-        if (text.Contains("банан"))
-            AddIfMissing(result, "Банан");
-
-        if (text.Contains("яблу"))
-            AddIfMissing(result, "Яблука");
-
-        if (text.Contains("помід"))
-            AddIfMissing(result, "Помідори");
-
-        if (text.Contains("огір"))
-            AddIfMissing(result, "Огірки");
-
-        if (text.Contains("картоп"))
-            AddIfMissing(result, "Картопля");
-
-        if (text.Contains("курк"))
-            AddIfMissing(result, "Курка");
-
-
-        // =====================================================
-        // "КУПИТИ ..."
-        // =====================================================
-
-        if (text.Contains("купити"))
-        {
-            var match =
-                Regex.Match(
-                    message,
-                    @"купити\s+(.+?)(?:\s+до\s+\d+(?:[.,]\d+)?|\s+за\s+\d+(?:[.,]\d+)?|\s+бюджет\s+\d+(?:[.,]\d+)?|$)",
-                    RegexOptions.IgnoreCase);
-
-            if (match.Success)
+        var productWords =
+            new[]
             {
-                var requested =
-                    match.Groups[1].Value.Split(
-                        new[] { ',', ';' },
-                        StringSplitOptions.RemoveEmptyEntries);
+                "молоко",
+                "хліб",
+                "хлеб",
+                "яйця",
+                "яйца",
+                "сир",
+                "масло",
+                "кефір",
+                "кефир",
+                "йогурт",
+                "сметана",
+                "вода",
+                "сік",
+                "сок",
+                "кава",
+                "чай",
+                "цукор",
+                "борошно",
+                "рис",
+                "гречка",
+                "макарони",
+                "картопля",
+                "помідори",
+                "помидоры",
+                "огірки",
+                "огурцы",
+                "банани",
+                "бананы",
+                "яблука",
+                "яблоки",
+                "курка",
+                "курятина",
+                "ковбаса",
+                "шоколад",
+                "печиво"
+            };
 
-                foreach (var item in requested)
-                {
-                    var name = item.Trim();
+        var foundProducts =
+            productWords
+                .Where(text.Contains)
+                .Distinct()
+                .ToList();
 
-                    if (!string.IsNullOrWhiteSpace(name))
-                    {
-                        AddIfMissing(result, name);
-                    }
-                }
+        if (foundProducts.Count == 0)
+            return null;
+
+        // Нормалізація назв.
+        var normalized =
+            new List<string>();
+
+        foreach (var product in foundProducts)
+        {
+            switch (product)
+            {
+                case "хлеб":
+                    normalized.Add("Хліб");
+                    break;
+
+                case "яйца":
+                    normalized.Add("Яйця");
+                    break;
+
+                case "кефир":
+                    normalized.Add("Кефір");
+                    break;
+
+                case "сок":
+                    normalized.Add("Сік");
+                    break;
+
+                case "помидоры":
+                    normalized.Add("Помідори");
+                    break;
+
+                case "огурцы":
+                    normalized.Add("Огірки");
+                    break;
+
+                case "бананы":
+                    normalized.Add("Банани");
+                    break;
+
+                case "яблоки":
+                    normalized.Add("Яблука");
+                    break;
+
+                default:
+                    normalized.Add(
+                        char.ToUpper(product[0]) +
+                        product[1..]);
+                    break;
             }
         }
 
+        decimal? budget = null;
 
-        return result;
-    }
-
-    private static void AddIfMissing(
-        List<string> list,
-        string value)
-    {
-        if (!list.Any(x =>
-                x.Equals(
-                    value,
-                    StringComparison.OrdinalIgnoreCase)))
-        {
-            list.Add(value);
-        }
-    }
-
-    // =========================================================
-    // БЮДЖЕТ
-    // =========================================================
-
-    private static decimal ExtractBudget(string message)
-    {
-        var match =
+        // Пошук:
+        // до 100 грн
+        // до 100 гривень
+        // бюджет 100
+        // максимум 100
+        var budgetMatch =
             Regex.Match(
-                message,
-                @"(?:до|бюджет|за|менше)\s*(\d+(?:[.,]\d+)?)",
-                RegexOptions.IgnoreCase);
+                text,
+                @"(?:до|бюджет|максимум|не більше|не більш як)\s*(\d+(?:[.,]\d+)?)");
 
-        if (!match.Success)
-            return 0;
-
-        var value =
-            match.Groups[1].Value.Replace(',', '.');
-
-        if (decimal.TryParse(
-                value,
-                NumberStyles.Any,
-                CultureInfo.InvariantCulture,
-                out var budget))
+        if (budgetMatch.Success)
         {
-            return budget;
+            var budgetText =
+                budgetMatch.Groups[1]
+                    .Value
+                    .Replace(',', '.');
+
+            if (decimal.TryParse(
+                    budgetText,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out var parsedBudget))
+            {
+                budget = parsedBudget;
+            }
         }
 
-        return 0;
+        return new ProductRequest
+        {
+            IsProductRequest = true,
+            Products = normalized,
+            Budget = budget
+        };
     }
 
-    // =========================================================
-    // TIME SLOT
-    // =========================================================
+    // ================================================================
+    // AI ВИЗНАЧЕННЯ ТОВАРНОГО ЗАПИТУ
+    // ================================================================
 
-    private static (string Start, string End)? FindFirstAvailableSlot(
-        string response)
+    private async Task<ProductRequest?>
+        ExtractProductRequestAsync(
+            string userMessage)
     {
+        var prompt = """
+Визнач, чи хоче користувач знайти продукти в магазині Silpo.
+
+Поверни ТІЛЬКИ JSON.
+
+Формат:
+
+{
+  "isProductRequest": true,
+  "products": ["Молоко", "Хліб"],
+  "budget": 350
+}
+
+Або:
+
+{
+  "isProductRequest": false,
+  "products": [],
+  "budget": null
+}
+
+Правила:
+
+- Якщо користувач хоче купити, знайти, підібрати або замовити
+  будь-який продукт — isProductRequest=true.
+- products — товари, які потрібні користувачу.
+- budget — максимальний бюджет у гривнях.
+- Якщо бюджет не вказаний — null.
+- Якщо користувач просить "сніданок", можна сформувати базовий
+  список продуктів для сніданку.
+- Якщо користувач просто ставить загальне питання — false.
+- Не додавай пояснення.
+""";
+
+        var result =
+            await CallOpenRouterAsync(
+                prompt,
+                userMessage);
+
+        result = CleanJson(result);
+
         try
         {
-            using var document =
-                JsonDocument.Parse(response);
-
-            var root = document.RootElement;
-
-            if (!root.TryGetProperty(
-                    "success",
-                    out var success))
-            {
-                return null;
-            }
-
-            if (!success.GetBoolean())
-                return null;
-
-            if (!root.TryGetProperty(
-                    "slots",
-                    out var slots))
-            {
-                return null;
-            }
-
-            foreach (var slot in slots.EnumerateArray())
-            {
-                if (!slot.TryGetProperty(
-                        "date",
-                        out var dateElement))
+            return JsonSerializer.Deserialize<ProductRequest>(
+                result,
+                new JsonSerializerOptions
                 {
-                    continue;
-                }
-
-                if (!slot.TryGetProperty(
-                        "start",
-                        out var startElement))
-                {
-                    continue;
-                }
-
-                if (!slot.TryGetProperty(
-                        "end",
-                        out var endElement))
-                {
-                    continue;
-                }
-
-                var date =
-                    dateElement.GetString();
-
-                var start =
-                    startElement.GetString();
-
-                var end =
-                    endElement.GetString();
-
-                if (string.IsNullOrWhiteSpace(date) ||
-                    string.IsNullOrWhiteSpace(start) ||
-                    string.IsNullOrWhiteSpace(end))
-                {
-                    continue;
-                }
-
-                return (
-                    $"{date} {start}",
-                    $"{date} {end}"
-                );
-            }
+                    PropertyNameCaseInsensitive = true
+                });
         }
-        catch
+        catch (Exception ex)
         {
-        }
+            Console.WriteLine(
+                $"Product request parse error: {ex.Message}");
 
-        return null;
+            return null;
+        }
     }
 
-    // =========================================================
-    // ПАРСИНГ ТОВАРІВ SILPO
-    // =========================================================
+    // ================================================================
+    // ЗАГАЛЬНА ВІДПОВІДЬ
+    // ================================================================
 
-    private static List<SilpoProduct> ParseProducts(
+    private async Task<string> AskGeneralAiAsync(
+        string userMessage)
+    {
+        var systemPrompt = """
+Ти — дружній AI-помічник для покупок у Silpo.
+
+Відповідай українською.
+
+Будь коротким, корисним і зрозумілим.
+
+Якщо користувач хоче знайти конкретний товар,
+не вигадуй його ціну або наявність.
+""";
+
+        return await CallOpenRouterAsync(
+            systemPrompt,
+            userMessage);
+    }
+
+    // ================================================================
+    // OPENROUTER
+    // ================================================================
+
+    private async Task<string> CallOpenRouterAsync(
+        string systemPrompt,
+        string userPrompt)
+    {
+        var apiKey =
+            _configuration["OpenRouter:ApiKey"];
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new Exception(
+                "OpenRouter:ApiKey не налаштований.");
+        }
+
+        var model =
+            _configuration["OpenRouter:Model"]
+            ?? "openai/gpt-4o-mini";
+
+        var request = new
+        {
+            model,
+
+            messages = new[]
+            {
+                new
+                {
+                    role = "system",
+                    content = systemPrompt
+                },
+
+                new
+                {
+                    role = "user",
+                    content = userPrompt
+                }
+            },
+
+            temperature = 0.2,
+
+            max_tokens = 800
+        };
+
+        var json =
+            JsonSerializer.Serialize(request);
+
+        using var httpRequest =
+            new HttpRequestMessage(
+                HttpMethod.Post,
+                OpenRouterUrl);
+
+        httpRequest.Headers.Authorization =
+            new AuthenticationHeaderValue(
+                "Bearer",
+                apiKey);
+
+        httpRequest.Headers.TryAddWithoutValidation(
+            "HTTP-Referer",
+            "http://localhost:5068");
+
+        httpRequest.Headers.TryAddWithoutValidation(
+            "X-Title",
+            "Silpo AI Assistant");
+
+        httpRequest.Content =
+            new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json");
+
+        using var response =
+            await _httpClient.SendAsync(
+                httpRequest);
+
+        var responseBody =
+            await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new Exception(
+                $"OpenRouter HTTP {(int)response.StatusCode}: {responseBody}");
+        }
+
+        using var document =
+            JsonDocument.Parse(responseBody);
+
+        var root =
+            document.RootElement;
+
+        if (!root.TryGetProperty(
+                "choices",
+                out var choices) ||
+            choices.ValueKind != JsonValueKind.Array ||
+            choices.GetArrayLength() == 0)
+        {
+            throw new Exception(
+                "OpenRouter не повернув choices.");
+        }
+
+        var message =
+            choices[0].GetProperty("message");
+
+        if (!message.TryGetProperty(
+                "content",
+                out var content))
+        {
+            throw new Exception(
+                "OpenRouter не повернув content.");
+        }
+
+        return content.GetString()?.Trim() ?? "";
+    }
+
+    // ================================================================
+    // PARSE SILPO PRODUCTS
+    // ================================================================
+
+    private List<SilpoProduct> ParseProducts(
         string rawResponse)
     {
         var result =
             new List<SilpoProduct>();
+
+        if (string.IsNullOrWhiteSpace(rawResponse))
+            return result;
 
         try
         {
             var json =
                 ExtractJson(rawResponse);
 
-            if (string.IsNullOrWhiteSpace(json))
-                return result;
-
             using var document =
                 JsonDocument.Parse(json);
 
-            ParseProductsFromElement(
-                document.RootElement,
-                result);
-        }
-        catch
-        {
-        }
+            var root =
+                document.RootElement;
 
-        return result
-            .GroupBy(
-                x => x.Name,
-                StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
-            .ToList();
+            JsonElement data;
+
+            if (root.TryGetProperty(
+                    "data",
+                    out var dataElement))
+            {
+                data = dataElement;
+            }
+            else
+            {
+                data = root;
+            }
+
+            FindProductArrays(
+                data,
+                result);
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"ParseProducts error: {ex.Message}");
+
+            return result;
+        }
     }
 
-    private static void ParseProductsFromElement(
+    private void FindProductArrays(
         JsonElement element,
         List<SilpoProduct> result)
     {
         if (element.ValueKind ==
-            JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-            {
-                ParseProductsFromElement(
-                    item,
-                    result);
-            }
-
-            return;
-        }
-
-        if (element.ValueKind !=
             JsonValueKind.Object)
         {
-            return;
-        }
-
-        string? name = null;
-
-        if (element.TryGetProperty(
-                "name",
-                out var nameElement))
-        {
-            name =
-                GetStringValue(nameElement);
-        }
-
-        if (string.IsNullOrWhiteSpace(name) &&
-            element.TryGetProperty(
-                "productName",
-                out var productNameElement))
-        {
-            name =
-                GetStringValue(productNameElement);
-        }
-
-        decimal? price = null;
-
-        if (element.TryGetProperty(
-                "price",
-                out var priceElement))
-        {
-            price =
-                ReadDecimal(priceElement);
-        }
-
-        if (price == null &&
-            element.TryGetProperty(
-                "currentPrice",
-                out var currentPriceElement))
-        {
-            price =
-                ReadDecimal(currentPriceElement);
-        }
-
-        bool available = true;
-
-        if (element.TryGetProperty(
-                "available",
-                out var availableElement))
-        {
-            if (availableElement.ValueKind ==
-                JsonValueKind.False)
+            foreach (var property
+                     in element.EnumerateObject())
             {
-                available = false;
-            }
-        }
-
-        string? stock = null;
-
-        if (element.TryGetProperty(
-                "stock",
-                out var stockElement))
-        {
-            stock =
-                GetStringValue(stockElement);
-        }
-
-        // ==============================
-        // ФОТО
-        // ==============================
-
-        string? image = null;
-
-        if (element.TryGetProperty(
-                "image",
-                out var imageElement))
-        {
-            image =
-                GetStringValue(imageElement);
-        }
-
-        // ==============================
-        // ДОДАТКОВІ ДАНІ
-        // ==============================
-
-        string? oldPrice = null;
-
-        if (element.TryGetProperty(
-                "oldPrice",
-                out var oldPriceElement))
-        {
-            oldPrice =
-                GetStringValue(oldPriceElement);
-        }
-
-        string? displayRatio = null;
-
-        if (element.TryGetProperty(
-                "displayRatio",
-                out var displayRatioElement))
-        {
-            displayRatio =
-                GetStringValue(displayRatioElement);
-        }
-
-        string? slug = null;
-
-        if (element.TryGetProperty(
-                "slug",
-                out var slugElement))
-        {
-            slug =
-                GetStringValue(slugElement);
-        }
-
-        // ==============================
-        // ДОДАЄМО ТОВАР
-        // ==============================
-
-        if (!string.IsNullOrWhiteSpace(name) &&
-            price.HasValue &&
-            price.Value > 0)
-        {
-            result.Add(
-                new SilpoProduct
+                if (property.Value.ValueKind ==
+                    JsonValueKind.Array)
                 {
-                    Name = name,
-                    Price = price.Value,
-                    Available = available,
-                    Stock = stock,
-                    Image = image,
-                    OldPrice = oldPrice,
-                    DisplayRatio = displayRatio,
-                    Slug = slug
-                });
-        }
+                    foreach (var item
+                             in property.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind !=
+                            JsonValueKind.Object)
+                        {
+                            continue;
+                        }
 
-        // ==============================
-        // РЕКУРСИВНИЙ ПОШУК ТОВАРІВ
-        // ==============================
+                        if (IsProduct(item))
+                        {
+                            var product =
+                                ParseProduct(item);
 
-        foreach (var property in element.EnumerateObject())
-        {
-            if (property.Name.Equals(
-                    "products",
-                    StringComparison.OrdinalIgnoreCase) ||
-                property.Name.Equals(
-                    "items",
-                    StringComparison.OrdinalIgnoreCase) ||
-                property.Name.Equals(
-                    "results",
-                    StringComparison.OrdinalIgnoreCase) ||
-                property.Name.Equals(
-                    "queries",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                ParseProductsFromElement(
-                    property.Value,
-                    result);
-            }
-        }
-    }
-
-    private static string? GetStringValue(
-        JsonElement element)
-    {
-        if (element.ValueKind ==
-            JsonValueKind.String)
-        {
-            return element.GetString();
-        }
-
-        if (element.ValueKind ==
-            JsonValueKind.Number)
-        {
-            return element.ToString();
-        }
-
-        return null;
-    }
-
-    private static decimal? ReadDecimal(
-        JsonElement element)
-    {
-        try
-        {
-            if (element.ValueKind ==
-                JsonValueKind.Number)
-            {
-                return element.GetDecimal();
-            }
-
-            if (element.ValueKind ==
-                JsonValueKind.String)
-            {
-                var text =
-                    element.GetString();
-
-                if (string.IsNullOrWhiteSpace(text))
-                    return null;
-
-                text =
-                    text
-                        .Replace(
-                            "грн",
-                            "",
-                            StringComparison.OrdinalIgnoreCase)
-                        .Trim()
-                        .Replace(',', '.');
-
-                if (decimal.TryParse(
-                        text,
-                        NumberStyles.Any,
-                        CultureInfo.InvariantCulture,
-                        out var value))
+                            if (product != null)
+                            {
+                                result.Add(product);
+                            }
+                        }
+                        else
+                        {
+                            FindProductArrays(
+                                item,
+                                result);
+                        }
+                    }
+                }
+                else if (
+                    property.Value.ValueKind ==
+                    JsonValueKind.Object)
                 {
-                    return value;
+                    FindProductArrays(
+                        property.Value,
+                        result);
                 }
             }
         }
+        else if (
+            element.ValueKind ==
+            JsonValueKind.Array)
+        {
+            foreach (var item
+                     in element.EnumerateArray())
+            {
+                FindProductArrays(
+                    item,
+                    result);
+            }
+        }
+    }
+
+    private bool IsProduct(
+        JsonElement element)
+    {
+        return
+            element.TryGetProperty(
+                "name",
+                out _)
+            &&
+            element.TryGetProperty(
+                "price",
+                out _)
+            &&
+            element.TryGetProperty(
+                "stock",
+                out _);
+    }
+
+    private SilpoProduct? ParseProduct(
+        JsonElement element)
+    {
+        try
+        {
+            var name =
+                element.TryGetProperty(
+                    "name",
+                    out var nameElement)
+                    ? nameElement.GetString()
+                    : null;
+
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+
+            var price =
+                element.TryGetProperty(
+                    "price",
+                    out var priceElement)
+                    ? priceElement.GetDecimal()
+                    : 0;
+
+            var stock =
+                element.TryGetProperty(
+                    "stock",
+                    out var stockElement)
+                    ? stockElement.GetInt32()
+                    : 0;
+
+            var available =
+                element.TryGetProperty(
+                    "available",
+                    out var availableElement)
+                    &&
+                    availableElement.GetBoolean();
+
+            var image =
+                element.TryGetProperty(
+                    "image",
+                    out var imageElement)
+                    ? imageElement.GetString()
+                    : null;
+
+            var displayRatio =
+                element.TryGetProperty(
+                    "displayRatio",
+                    out var ratioElement)
+                    ? ratioElement.GetString()
+                    : null;
+
+            long? externalProductId = null;
+
+            if (element.TryGetProperty(
+                    "externalProductId",
+                    out var externalIdElement))
+            {
+                if (externalIdElement.ValueKind ==
+                    JsonValueKind.Number &&
+                    externalIdElement.TryGetInt64(
+                        out var id))
+                {
+                    externalProductId = id;
+                }
+            }
+
+            return new SilpoProduct
+            {
+                Name = name,
+                Price = price,
+                Stock = stock,
+                Available = available,
+                Image = image,
+                DisplayRatio = displayRatio,
+                ExternalProductId =
+                    externalProductId
+            };
+        }
         catch
         {
+            return null;
+        }
+    }
+
+    // ================================================================
+    // TIME SLOT
+    // ================================================================
+
+    private TimeSlotInfo?
+        ExtractFirstAvailableTimeSlot(
+            string rawResponse)
+    {
+        try
+        {
+            var json =
+                ExtractJson(rawResponse);
+
+            using var document =
+                JsonDocument.Parse(json);
+
+            var root =
+                document.RootElement;
+
+            if (!root.TryGetProperty(
+                    "slots",
+                    out var slots) ||
+                slots.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            foreach (var slot
+                     in slots.EnumerateArray())
+            {
+                var date =
+                    slot.TryGetProperty(
+                        "date",
+                        out var dateElement)
+                        ? dateElement.GetString()
+                        : null;
+
+                var startIso =
+                    slot.TryGetProperty(
+                        "startIso",
+                        out var startIsoElement)
+                        ? startIsoElement.GetString()
+                        : null;
+
+                var endIso =
+                    slot.TryGetProperty(
+                        "endIso",
+                        out var endIsoElement)
+                        ? endIsoElement.GetString()
+                        : null;
+
+                var start =
+                    slot.TryGetProperty(
+                        "start",
+                        out var startElement)
+                        ? startElement.GetString()
+                        : null;
+
+                var end =
+                    slot.TryGetProperty(
+                        "end",
+                        out var endElement)
+                        ? endElement.GetString()
+                        : null;
+
+                if (string.IsNullOrWhiteSpace(
+                        startIso) ||
+                    string.IsNullOrWhiteSpace(
+                        endIso))
+                {
+                    if (!string.IsNullOrWhiteSpace(date) &&
+                        !string.IsNullOrWhiteSpace(start) &&
+                        !string.IsNullOrWhiteSpace(end))
+                    {
+                        startIso =
+                            BuildKyivIso(
+                                date,
+                                start);
+
+                        endIso =
+                            BuildKyivIso(
+                                date,
+                                end);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(startIso) ||
+                    string.IsNullOrWhiteSpace(endIso))
+                {
+                    continue;
+                }
+
+                return new TimeSlotInfo
+                {
+                    Date = date ?? "",
+                    StartIso = startIso,
+                    EndIso = endIso,
+                    DisplayTime =
+                        $"{date} {start}–{end}"
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"Time slot parse error: {ex.Message}");
         }
 
         return null;
     }
 
-    // =========================================================
-    // ВИТЯГУЄМО JSON
-    // =========================================================
+    private string BuildKyivIso(
+        string date,
+        string time)
+    {
+        if (DateTime.TryParseExact(
+                $"{date} {time}",
+                "dd.MM.yyyy HH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var dateTime))
+        {
+            return
+                $"{dateTime:yyyy-MM-dd}T{dateTime:HH:mm:ss}+03:00";
+        }
 
-    private static string ExtractJson(string raw)
+        return $"{date}T{time}:00+03:00";
+    }
+
+    // ================================================================
+    // JSON HELPERS
+    // ================================================================
+
+    private string ExtractJson(
+        string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return "";
-
-        var text =
-            raw.Trim();
-
-        if (text.StartsWith(
-                "HTTP ",
-                StringComparison.OrdinalIgnoreCase))
         {
-            var newline =
-                text.IndexOf('\n');
-
-            if (newline >= 0)
-            {
-                text =
-                    text[(newline + 1)..].Trim();
-            }
+            throw new Exception(
+                "Порожня відповідь.");
         }
+
+        var firstBrace =
+            raw.IndexOf('{');
+
+        var firstBracket =
+            raw.IndexOf('[');
+
+        var positions =
+            new[]
+            {
+                firstBrace,
+                firstBracket
+            }
+            .Where(x => x >= 0)
+            .ToArray();
+
+        if (positions.Length == 0)
+        {
+            throw new Exception(
+                "У відповіді не знайдено JSON.");
+        }
+
+        var start =
+            positions.Min();
+
+        return raw[start..].Trim();
+    }
+
+    private string CleanJson(
+        string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return text;
+
+        text = text.Trim();
 
         if (text.StartsWith("```"))
         {
-            var newline =
-                text.IndexOf('\n');
+            text =
+                Regex.Replace(
+                    text,
+                    @"^```(?:json)?\s*",
+                    "",
+                    RegexOptions.IgnoreCase);
 
-            if (newline >= 0)
-            {
-                text =
-                    text[(newline + 1)..];
-            }
-
-            var ending =
-                text.LastIndexOf("```");
-
-            if (ending >= 0)
-            {
-                text =
-                    text[..ending];
-            }
+            text =
+                Regex.Replace(
+                    text,
+                    @"\s*```$",
+                    "");
         }
 
-        text =
-            text.Trim();
-
-        var firstBrace =
-            text.IndexOf('{');
-
-        var lastBrace =
-            text.LastIndexOf('}');
-
-        if (firstBrace >= 0 &&
-            lastBrace > firstBrace)
-        {
-            return text[
-                firstBrace..(lastBrace + 1)];
-        }
-
-        var firstArray =
-            text.IndexOf('[');
-
-        var lastArray =
-            text.LastIndexOf(']');
-
-        if (firstArray >= 0 &&
-            lastArray > firstArray)
-        {
-            return text[
-                firstArray..(lastArray + 1)];
-        }
-
-        return text;
+        return text.Trim();
     }
 
-    // =========================================================
-    // ВИБІР ТОВАРІВ
-    // =========================================================
+    // ================================================================
+    // MODELS
+    // ================================================================
 
-    private static List<SilpoProduct>
-        SelectProductsWithinBudget(
-            List<SilpoProduct> products,
-            List<string> requestedProducts,
-            decimal budget)
+    private class ProductRequest
     {
-        var selected =
-            new List<SilpoProduct>();
+        [JsonPropertyName("isProductRequest")]
+        public bool IsProductRequest { get; set; }
 
-        var available =
-            products
-                .Where(x => x.Available)
-                .Where(x => x.Price > 0)
-                .ToList();
+        [JsonPropertyName("products")]
+        public List<string> Products { get; set; } =
+            new();
 
-        foreach (var requested in requestedProducts)
-        {
-            var match =
-                FindBestProduct(
-                    available,
-                    requested);
-
-            if (match == null)
-                continue;
-
-            if (selected.Any(x =>
-                    x.Name.Equals(
-                        match.Name,
-                        StringComparison.OrdinalIgnoreCase)))
-            {
-                continue;
-            }
-
-            var currentTotal =
-                selected.Sum(x => x.Price);
-
-            if (currentTotal + match.Price <= budget)
-            {
-                selected.Add(match);
-            }
-        }
-
-        return selected;
+        [JsonPropertyName("budget")]
+        public decimal? Budget { get; set; }
     }
-
-    // =========================================================
-    // ПОШУК НАЙКРАЩОГО ТОВАРУ
-    // =========================================================
-
-    private static SilpoProduct? FindBestProduct(
-        List<SilpoProduct> products,
-        string requested)
-    {
-        var candidates =
-            products
-                .Where(x =>
-                    x.Name.Contains(
-                        requested,
-                        StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-        if (candidates.Count == 0)
-        {
-            var requestedWords =
-                requested
-                    .Split(
-                        ' ',
-                        StringSplitOptions.RemoveEmptyEntries);
-
-            candidates =
-                products
-                    .Where(x =>
-                        requestedWords.Any(word =>
-                            x.Name.Contains(
-                                word,
-                                StringComparison.OrdinalIgnoreCase)))
-                    .ToList();
-        }
-
-        if (candidates.Count == 0)
-            return null;
-
-        // Виключаємо дитячі товари,
-        // якщо користувач явно їх не просив.
-        var normalProducts =
-            candidates
-                .Where(x => !IsChildProduct(x.Name))
-                .ToList();
-
-        if (normalProducts.Count > 0)
-            candidates = normalProducts;
-
-        // Для звичайних яєць надаємо перевагу курячим.
-        if (requested.Equals(
-                "Яйця",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            var chickenEggs =
-                candidates
-                    .Where(x =>
-                        x.Name.Contains(
-                            "куряч",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        x.Name.Contains(
-                            "курячі",
-                            StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-
-            if (chickenEggs.Count > 0)
-                candidates = chickenEggs;
-        }
-
-        // Сортуємо за якістю збігу,
-        // а не просто за найдешевшою ціною.
-        return candidates
-            .Select(x => new
-            {
-                Product = x,
-                Score = CalculateProductScore(
-                    x,
-                    requested)
-            })
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.Product.Price)
-            .Select(x => x.Product)
-            .FirstOrDefault();
-    }
-
-    private static bool IsChildProduct(string name)
-    {
-        var text =
-            name.ToLowerInvariant();
-
-        string[] forbidden =
-        {
-            "дитяч",
-            "для дітей",
-            "для дітей",
-            "дитяче харчування",
-            "від 0 місяців",
-            "від 4 місяців",
-            "від 6 місяців",
-            "від 9 місяців",
-            "від 12 місяців",
-            "немовля",
-            "немовлят",
-            "baby",
-            "junior",
-            "ростишка"
-        };
-
-        return forbidden.Any(
-            word => text.Contains(word));
-    }
-
-    private static int CalculateProductScore(
-        SilpoProduct product,
-        string requested)
-    {
-        var name =
-            product.Name.ToLowerInvariant();
-
-        var request =
-            requested.ToLowerInvariant();
-
-        int score = 0;
-
-        // Точний збіг — найвищий пріоритет.
-        if (name.Equals(request))
-            score += 1000;
-
-        // Назва починається із запиту.
-        if (name.StartsWith(request))
-            score += 200;
-
-        // Містить повний запит.
-        if (name.Contains(request))
-            score += 100;
-
-        // Збіг окремих слів.
-        var words =
-            request.Split(
-                ' ',
-                StringSplitOptions.RemoveEmptyEntries);
-
-        foreach (var word in words)
-        {
-            if (name.Contains(word))
-                score += 20;
-        }
-
-        // Нормальні продукти мають перевагу.
-        if (!IsChildProduct(product.Name))
-            score += 100;
-
-        // Для молока краще звичайне коров'яче молоко.
-        if (request.Contains("молоко"))
-        {
-            if (name.Contains("коров"))
-                score += 30;
-
-            if (name.Contains("стерилізован"))
-                score += 20;
-
-            if (name.Contains("пастеризован"))
-                score += 20;
-        }
-
-        // Для йогурту уникаємо дитячих брендів.
-        if (request.Contains("йогурт"))
-        {
-            if (name.Contains("ростишка"))
-                score -= 500;
-        }
-
-        // Для сиру уникаємо дитячих сирків.
-        if (request.Contains("сир"))
-        {
-            if (name.Contains("дит"))
-                score -= 500;
-
-            if (name.Contains("кисломолоч"))
-                score += 30;
-        }
-
-        return score;
-    }
-
-    // =========================================================
-    // OPENROUTER
-    // =========================================================
-
-    private async Task<string?> GenerateAiMessageAsync(
-        string userMessage,
-        List<SilpoProduct> selectedItems,
-        decimal budget,
-        string fallbackMessage)
-    {
-        var apiKey =
-            _configuration["OpenRouter:ApiKey"];
-
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return fallbackMessage;
-
-        try
-        {
-            var itemsText =
-                string.Join(
-                    "\n",
-                    selectedItems.Select(
-                        x =>
-                            "- " +
-                            x.Name +
-                            ": " +
-                            x.Price.ToString(
-                                "0.00",
-                                CultureInfo.InvariantCulture) +
-                            " грн"));
-
-            var total =
-                selectedItems.Sum(x => x.Price);
-
-            var prompt =
-                "Користувач написав: " +
-                userMessage +
-                "\n\n" +
-                "Реально знайдені товари Silpo:\n" +
-                itemsText +
-                "\n\n" +
-                "Бюджет: " +
-                budget.ToString(
-                    "0.00",
-                    CultureInfo.InvariantCulture) +
-                " грн\n" +
-                "Загальна сума: " +
-                total.ToString(
-                    "0.00",
-                    CultureInfo.InvariantCulture) +
-                " грн\n\n" +
-                "Напиши коротке повідомлення українською мовою. " +
-                "Не вигадуй нових товарів. " +
-                "Не змінюй ціни. " +
-                "Не використовуй JSON. " +
-                "Не використовуй Markdown.";
-
-            var requestBody = new
-            {
-                model = DefaultModel,
-                messages = new[]
-                {
-                    new
-                    {
-                        role = "user",
-                        content = prompt
-                    }
-                },
-                max_tokens = 120,
-                temperature = 0.2
-            };
-
-            using var request =
-                new HttpRequestMessage(
-                    HttpMethod.Post,
-                    OpenRouterUrl);
-
-            request.Headers.Authorization =
-                new AuthenticationHeaderValue(
-                    "Bearer",
-                    apiKey);
-
-            request.Headers.TryAddWithoutValidation(
-                "HTTP-Referer",
-                "http://localhost:5068");
-
-            request.Headers.TryAddWithoutValidation(
-                "X-Title",
-                "Hacaton Silpo Assistant");
-
-            request.Content =
-                new StringContent(
-                    JsonSerializer.Serialize(requestBody),
-                    Encoding.UTF8,
-                    "application/json");
-
-            using var response =
-                await _httpClient.SendAsync(request);
-
-            if (!response.IsSuccessStatusCode)
-                return fallbackMessage;
-
-            var responseText =
-                await response.Content.ReadAsStringAsync();
-
-            using var document =
-                JsonDocument.Parse(responseText);
-
-            if (!document.RootElement.TryGetProperty(
-                    "choices",
-                    out var choices))
-            {
-                return fallbackMessage;
-            }
-
-            if (choices.GetArrayLength() == 0)
-                return fallbackMessage;
-
-            var content =
-                choices[0]
-                    .GetProperty("message")
-                    .GetProperty("content")
-                    .GetString();
-
-            if (string.IsNullOrWhiteSpace(content))
-                return fallbackMessage;
-
-            if (content.Contains(
-                    "User Safety",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return fallbackMessage;
-            }
-
-            if (content.Contains("```") ||
-                content.TrimStart().StartsWith("{"))
-            {
-                return fallbackMessage;
-            }
-
-            return content.Trim();
-        }
-        catch
-        {
-            return fallbackMessage;
-        }
-    }
-
-    // =========================================================
-    // ФІНАЛЬНА ВІДПОВІДЬ API
-    // =========================================================
-
-    private static string CreateResponse(
-        bool success,
-        string message,
-        decimal budget,
-        decimal total,
-        List<SilpoProduct> items,
-        string? error = null)
-    {
-        var formattedItems =
-            items.Select(x => new
-            {
-                name = x.Name,
-                price = Math.Round(x.Price, 2),
-                oldPrice = x.OldPrice,
-                available = x.Available,
-                stock = x.Stock,
-                displayRatio = x.DisplayRatio,
-                image = x.Image,
-                slug = x.Slug
-            }).ToArray();
-
-        if (string.IsNullOrWhiteSpace(error))
-        {
-            var response =
-                new
-                {
-                    success,
-                    message,
-                    budget = Math.Round(budget, 2),
-                    total = Math.Round(total, 2),
-                    items = formattedItems
-                };
-
-            return JsonSerializer.Serialize(
-                response,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder =
-                        System.Text.Encodings.Web.JavaScriptEncoder
-                            .UnsafeRelaxedJsonEscaping
-                });
-        }
-        else
-        {
-            var response =
-                new
-                {
-                    success,
-                    message,
-                    budget = Math.Round(budget, 2),
-                    total = Math.Round(total, 2),
-                    items = formattedItems,
-                    error
-                };
-
-            return JsonSerializer.Serialize(
-                response,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder =
-                        System.Text.Encodings.Web.JavaScriptEncoder
-                            .UnsafeRelaxedJsonEscaping
-                });
-        }
-    }
-
-    // =========================================================
-    // МОДЕЛЬ ТОВАРУ
-    // =========================================================
 
     private class SilpoProduct
     {
@@ -1331,16 +1255,26 @@ public class AiAgentService
 
         public decimal Price { get; set; }
 
-        public bool Available { get; set; }
+        public int Stock { get; set; }
 
-        public string? Stock { get; set; }
+        public bool Available { get; set; }
 
         public string? Image { get; set; }
 
-        public string? OldPrice { get; set; }
-
         public string? DisplayRatio { get; set; }
 
-        public string? Slug { get; set; }
+        public long? ExternalProductId { get; set; }
+    }
+
+    private class TimeSlotInfo
+    {
+        public string Date { get; set; } = "";
+
+        public string StartIso { get; set; } = "";
+
+        public string EndIso { get; set; } = "";
+
+        public string DisplayTime { get; set; } = "";
     }
 }
+

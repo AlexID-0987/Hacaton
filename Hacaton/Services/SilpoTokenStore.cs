@@ -6,4 +6,9 @@ public class SilpoTokenStore
 
     // ID MCP-сесії
     public string? McpSessionId { get; set; }
+    
+
+    public string? BranchId { get; set; }
+
+    public string? DeliveryAddress { get; set; }
 }

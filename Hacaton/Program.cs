@@ -1,4 +1,6 @@
+using Hacaton.Data;
 using Hacaton.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace Hacaton;
 
@@ -21,7 +23,8 @@ public class Program
 
         // OAuth token
         builder.Services.AddSingleton<SilpoTokenStore>();
-
+        builder.Services.AddDbContext<OrderAssistantDbContext>(options =>
+        options.UseInMemoryDatabase("ProductAssistantDb"));
         var app = builder.Build();
         
         if (app.Environment.IsDevelopment())

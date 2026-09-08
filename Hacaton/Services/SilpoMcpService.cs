@@ -1,4 +1,5 @@
 ﻿
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -12,8 +13,6 @@ public class SilpoMcpService
 
     private const string McpUrl = "https://mcp.silpo.ua/mcp";
 
-    private int _requestId = 1;
-
     public SilpoMcpService(
         HttpClient httpClient,
         SilpoTokenStore tokenStore)
@@ -23,20 +22,19 @@ public class SilpoMcpService
     }
 
     // ============================================================
-    // INITIALIZE MCP SESSION
+    // INITIALIZE MCP
     // ============================================================
 
-    private async Task<bool> InitializeAsync(string accessToken)
+    public async Task<string> InitializeAsync(string accessToken)
     {
-        _httpClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue(
-                "Bearer",
-                accessToken);
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
 
-        var request = new
+        var body = new
         {
             jsonrpc = "2.0",
-            id = _requestId++,
+            id = 1,
             method = "initialize",
             @params = new
             {
@@ -50,251 +48,267 @@ public class SilpoMcpService
             }
         };
 
-        var json = JsonSerializer.Serialize(request);
+        return await SendMcpRequestAsync(
+            accessToken,
+            body);
+    }
 
-        using var content = new StringContent(
-            json,
-            Encoding.UTF8,
-            "application/json");
+    // ============================================================
+    // ENSURE SESSION
+    // ============================================================
+
+    public async Task EnsureSessionAsync(
+        string accessToken)
+    {
+        if (!string.IsNullOrWhiteSpace(
+                _tokenStore.McpSessionId))
+        {
+            return;
+        }
+
+        await InitializeSessionAsync(accessToken);
+    }
+
+    private async Task InitializeSessionAsync(
+        string accessToken)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        var body = new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "initialize",
+            @params = new
+            {
+                protocolVersion = "2025-03-26",
+                capabilities = new { },
+                clientInfo = new
+                {
+                    name = "Hacaton",
+                    version = "1.0.0"
+                }
+            }
+        };
+
+        using var request =
+            CreateMcpRequest(
+                accessToken,
+                body);
 
         using var response =
-            await _httpClient.PostAsync(
-                McpUrl,
-                content);
+            await _httpClient.SendAsync(request);
 
         var responseBody =
             await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            throw new HttpRequestException(
+                $"Silpo MCP initialize HTTP {(int)response.StatusCode}: {responseBody}");
         }
 
-        // ========================================================
-        // IMPORTANT:
-        // MCP session ID comes from response headers
-        // ========================================================
+        var sessionId =
+            GetSessionId(response);
 
-        if (response.Headers.TryGetValues(
-                "Mcp-Session-Id",
-                out var sessionValues))
+        if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            var sessionId = sessionValues.FirstOrDefault();
-
-            if (!string.IsNullOrWhiteSpace(sessionId))
-            {
-                _tokenStore.McpSessionId = sessionId;
-            }
+            _tokenStore.McpSessionId =
+                sessionId;
         }
-
-        return true;
     }
 
-
     // ============================================================
-    // ENSURE SESSION
-    // ============================================================
-
-    private async Task<bool> EnsureSessionAsync(
-        string accessToken)
-    {
-        // Якщо вже є session ID —
-        // повторний initialize не потрібен
-        if (!string.IsNullOrWhiteSpace(
-                _tokenStore.McpSessionId))
-        {
-            return true;
-        }
-
-        return await InitializeAsync(accessToken);
-    }
-
-
-    // ============================================================
-    // COMMON MCP REQUEST
+    // SEND MCP REQUEST
     // ============================================================
 
-    private async Task<HttpResponseMessage> SendMcpRequestAsync(
+    private async Task<string> SendMcpRequestAsync(
         string accessToken,
-        object request)
+        object body)
     {
-        _httpClient.DefaultRequestHeaders.Authorization =
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        await EnsureSessionAsync(accessToken);
+
+        using var request =
+            CreateMcpRequest(
+                accessToken,
+                body);
+
+        using var response =
+            await _httpClient.SendAsync(request);
+
+        var responseBody =
+            await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Silpo MCP HTTP {(int)response.StatusCode}: {responseBody}");
+        }
+
+        var sessionId =
+            GetSessionId(response);
+
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            _tokenStore.McpSessionId =
+                sessionId;
+        }
+
+        return ExtractMcpJson(responseBody);
+    }
+
+    // ============================================================
+    // CREATE MCP REQUEST
+    // ============================================================
+
+    private HttpRequestMessage CreateMcpRequest(
+        string accessToken,
+        object body)
+    {
+        var request =
+            new HttpRequestMessage(
+                HttpMethod.Post,
+                McpUrl);
+
+        request.Headers.Authorization =
             new AuthenticationHeaderValue(
                 "Bearer",
                 accessToken);
 
-        using var content = new StringContent(
-            JsonSerializer.Serialize(request),
-            Encoding.UTF8,
-            "application/json");
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue(
+                "application/json"));
 
-        var httpRequest = new HttpRequestMessage(
-            HttpMethod.Post,
-            McpUrl);
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue(
+                "text/event-stream"));
 
-        httpRequest.Content = content;
-
-        // MCP session
         if (!string.IsNullOrWhiteSpace(
                 _tokenStore.McpSessionId))
         {
-            httpRequest.Headers.TryAddWithoutValidation(
+            request.Headers.TryAddWithoutValidation(
                 "Mcp-Session-Id",
                 _tokenStore.McpSessionId);
         }
 
-        return await _httpClient.SendAsync(
-            httpRequest);
+        var json =
+            JsonSerializer.Serialize(body);
+
+        request.Content =
+            new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json");
+
+        return request;
     }
 
+    // ============================================================
+    // GET MCP SESSION ID
+    // ============================================================
+
+    private string? GetSessionId(
+        HttpResponseMessage response)
+    {
+        if (response.Headers.TryGetValues(
+                "Mcp-Session-Id",
+                out var values))
+        {
+            return values.FirstOrDefault();
+        }
+
+        return null;
+    }
 
     // ============================================================
-    // GENERIC TOOL CALL
+    // CALL TOOL
     // ============================================================
 
     public async Task<string> CallToolAsync(
         string accessToken,
-        int id,
         string toolName,
         object arguments)
     {
-        if (!await EnsureSessionAsync(accessToken))
-        {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                message = "Не вдалося ініціалізувати MCP-сесію Silpo."
-            });
-        }
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
 
-        var request = new
+        if (string.IsNullOrWhiteSpace(toolName))
+            throw new ArgumentException(
+                "Назва MCP tool не може бути порожньою.");
+
+        var body = new
         {
             jsonrpc = "2.0",
-            id,
+            id =
+                DateTimeOffset.UtcNow
+                    .ToUnixTimeMilliseconds(),
+
             method = "tools/call",
+
             @params = new
             {
                 name = toolName,
                 arguments
             }
         };
+        var json = JsonSerializer.Serialize(body);
 
-        using var response =
-            await SendMcpRequestAsync(
-                accessToken,
-                request);
+        Console.WriteLine("========== MCP REQUEST ==========");
+        Console.WriteLine(json);
+        Console.WriteLine("=================================");
 
-        var responseBody =
-            await response.Content.ReadAsStringAsync();
-
-        // ========================================================
-        // Якщо MCP каже, що session недійсна —
-        // очищаємо session і пробуємо один раз повторно.
-        // ========================================================
-
-        if ((int)response.StatusCode == 400 ||
-            (int)response.StatusCode == 404)
-        {
-            _tokenStore.McpSessionId = null;
-
-            if (await InitializeAsync(accessToken))
-            {
-                using var retryResponse =
-                    await SendMcpRequestAsync(
-                        accessToken,
-                        request);
-
-                var retryBody =
-                    await retryResponse.Content.ReadAsStringAsync();
-
-                return
-                    $"HTTP {(int)retryResponse.StatusCode}\n{retryBody}";
-            }
-        }
-
-        return
-            $"HTTP {(int)response.StatusCode}\n{responseBody}";
+        return await SendMcpRequestAsync(
+            accessToken,
+            body);
+        
     }
-
-
+    
+    
     // ============================================================
-    // TEST INITIALIZE
-    // ============================================================
-
-    public async Task<string> TestAsync(
-        string accessToken)
-    {
-        _tokenStore.McpSessionId = null;
-
-        var success =
-            await InitializeAsync(accessToken);
-
-        if (!success)
-        {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                message = "MCP initialize завершився помилкою."
-            });
-        }
-
-        return JsonSerializer.Serialize(new
-        {
-            success = true,
-            message = "MCP initialize успішний.",
-            sessionId = _tokenStore.McpSessionId
-        });
-    }
-
-
-    // ============================================================
-    // TOOLS LIST
+    // GET TOOLS
     // ============================================================
 
     public async Task<string> GetToolsAsync(
         string accessToken)
     {
-        if (!await EnsureSessionAsync(accessToken))
-        {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                message = "Не вдалося ініціалізувати MCP-сесію."
-            });
-        }
-
-        var request = new
+        var body = new
         {
             jsonrpc = "2.0",
-            id = _requestId++,
+            id =
+                DateTimeOffset.UtcNow
+                    .ToUnixTimeMilliseconds(),
+
             method = "tools/list",
+
             @params = new { }
         };
 
-        using var response =
-            await SendMcpRequestAsync(
-                accessToken,
-                request);
-
-        var responseBody =
-            await response.Content.ReadAsStringAsync();
-
-        return
-            $"HTTP {(int)response.StatusCode}\n{responseBody}";
+        return await SendMcpRequestAsync(
+            accessToken,
+            body);
     }
-
 
     // ============================================================
     // FIND ADDRESS
     // ============================================================
 
-    public Task<string> FindAddressAsync(
+    public async Task<string> FindAddressAsync(
         string accessToken,
         string address)
     {
-        return CallToolAsync(
+        if (string.IsNullOrWhiteSpace(address))
+            throw new ArgumentException(
+                "Адреса не може бути порожньою.");
+
+        return await CallToolAsync(
             accessToken,
-            3,
             "silpo_find_address",
             new
             {
@@ -302,19 +316,53 @@ public class SilpoMcpService
             });
     }
 
+    // ============================================================
+    // GET AVAILABLE DELIVERY TYPES
+    // WITHOUT COORDINATES
+    // ============================================================
+
+    public async Task<string> GetAvailableDeliveryTypesAsync(
+        string accessToken)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        return await CallToolAsync(
+            accessToken,
+            "silpo_get_available_delivery_types",
+            new { });
+    }
 
     // ============================================================
-    // DELIVERY TYPES
+    // GET AVAILABLE DELIVERY TYPES
+    // BY COORDINATES
     // ============================================================
 
-    public Task<string> GetAvailableDeliveryTypesAsync(
+    public async Task<string> GetAvailableDeliveryTypesAsync(
         string accessToken,
         double latitude,
         double longitude)
     {
-        return CallToolAsync(
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "========== SILPO DELIVERY TYPES ==========");
+
+        Console.WriteLine(
+            $"Latitude:  {latitude}");
+
+        Console.WriteLine(
+            $"Longitude: {longitude}");
+
+        Console.WriteLine(
+            "==========================================");
+
+        return await CallToolAsync(
             accessToken,
-            5,
             "silpo_get_available_delivery_types",
             new
             {
@@ -323,182 +371,461 @@ public class SilpoMcpService
             });
     }
 
+    // ============================================================
+    // OVERLOAD: OBJECT ACCESS TOKEN
+    // ============================================================
+
+    public async Task<string> GetAvailableDeliveryTypesAsync(
+        object accessToken)
+    {
+        if (accessToken is not string token ||
+            string.IsNullOrWhiteSpace(token))
+        {
+            throw new ArgumentException(
+                "Access token повинен бути string.");
+        }
+
+        return await GetAvailableDeliveryTypesAsync(
+            token);
+    }
 
     // ============================================================
-    // TIME SLOTS
+    // GET DELIVERY TYPES
+    // ============================================================
+
+    public async Task<string> GetDeliveryTypesAsync(
+        string accessToken)
+    {
+        return await GetAvailableDeliveryTypesAsync(
+            accessToken);
+    }
+
+    // ============================================================
+    // SET BRANCH BY COORDINATES
+    // ============================================================
+
+    public async Task<string> SetBranchByCoordinatesAsync(
+        string accessToken,
+        double latitude,
+        double longitude)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "========== SET BRANCH ==========");
+
+        Console.WriteLine(
+            $"Latitude:  {latitude}");
+
+        Console.WriteLine(
+            $"Longitude: {longitude}");
+
+        Console.WriteLine(
+            "================================");
+
+        var result =
+            await GetAvailableDeliveryTypesAsync(
+                accessToken,
+                latitude,
+                longitude);
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "Available delivery types:");
+
+        Console.WriteLine(result);
+
+        var branchId =
+            ExtractBranchId(result);
+
+        Console.WriteLine();
+        Console.WriteLine(
+            $"Extracted BranchId: {branchId}");
+
+        if (!string.IsNullOrWhiteSpace(branchId))
+        {
+            _tokenStore.BranchId =
+                branchId;
+
+            Console.WriteLine(
+                $"SILPO BRANCH SET: {_tokenStore.BranchId}");
+        }
+        else
+        {
+            Console.WriteLine(
+                "WARNING: BranchId не знайдений.");
+        }
+
+        _tokenStore.DeliveryAddress =
+            $"{latitude.ToString(CultureInfo.InvariantCulture)}," +
+            $"{longitude.ToString(CultureInfo.InvariantCulture)}";
+
+        return JsonSerializer.Serialize(
+            new
+            {
+                success = true,
+
+                branchId =
+                    _tokenStore.BranchId,
+
+                latitude,
+                longitude,
+
+                deliveryType =
+                    "DeliveryHome"
+            },
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+    }
+
+    // ============================================================
+    // GET TIME SLOTS
     // ============================================================
 
     public async Task<string> GetTimeSlotsAsync(
         string accessToken,
-        string branchId,
-        string deliveryType)
+        string deliveryType = "DeliveryHome")
     {
-        var rawResponse =
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        if (string.IsNullOrWhiteSpace(
+                _tokenStore.BranchId))
+        {
+            throw new Exception(
+                "BranchId не визначений.");
+        }
+
+        var result =
             await CallToolAsync(
                 accessToken,
-                6,
                 "silpo_get_time_slots",
                 new
                 {
-                    branchId,
-                    deliveryTypes = new[]
-                    {
-                        deliveryType
-                    },
-                    limit = 20
+                    branchId = _tokenStore.BranchId,
+                    deliveryType
                 });
 
+        return NormalizeTimeSlots(result);
+    }
+
+    // ============================================================
+    // FIND PRODUCTS
+    // ============================================================
+
+    public async Task<string> FindProductsAsync(
+        string accessToken,
+        string deliveryType,
+        string timeslotStart,
+        string timeslotEnd,
+        string[] products)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        if (string.IsNullOrWhiteSpace(
+                _tokenStore.BranchId))
+        {
+            throw new Exception(
+                "BranchId не визначений.");
+        }
+
+        if (products == null ||
+            products.Length == 0)
+        {
+            throw new ArgumentException(
+                "Не передані товари.");
+        }
+
+        if (string.IsNullOrWhiteSpace(
+                timeslotStart) ||
+            string.IsNullOrWhiteSpace(
+                timeslotEnd))
+        {
+            throw new ArgumentException(
+                "Не переданий час доставки.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            "========== FIND PRODUCTS ==========");
+
+        Console.WriteLine(
+            $"BranchId:       {_tokenStore.BranchId}");
+
+        Console.WriteLine(
+            $"DeliveryType:   {deliveryType}");
+
+        Console.WriteLine(
+            $"Timeslot Start: {timeslotStart}");
+
+        Console.WriteLine(
+            $"Timeslot End:   {timeslotEnd}");
+
+        Console.WriteLine(
+            $"Products:       {string.Join(", ", products)}");
+
+        Console.WriteLine(
+            "===================================");
+
+        var result =
+            await CallToolAsync(
+                accessToken,
+                "silpo_find_products_batch",
+                new
+                {
+                    products,
+                    deliveryType,
+                    timeslotStart,
+                    timeslotEnd,
+
+                    branchId =
+                        _tokenStore.BranchId
+                });
+        Console.WriteLine("========== RAW PRODUCTS RESPONSE ==========");
+        Console.WriteLine(result);
+        Console.WriteLine("===========================================");
+
+        return JsonSerializer.Serialize(
+            new
+            {
+                success = true,
+
+                branchId =
+                    _tokenStore.BranchId,
+
+                deliveryType,
+                timeslotStart,
+                timeslotEnd,
+
+                data =
+                    ParseJsonElement(result)
+            },
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+    }
+
+    // ============================================================
+    // TEST
+    // ============================================================
+
+    public async Task<string> TestAsync(
+        string accessToken)
+    {
+        return await GetToolsAsync(
+            accessToken);
+    }
+
+    // ============================================================
+    // EXTRACT BRANCH ID
+    // ============================================================
+
+    private string? ExtractBranchId(
+        string json)
+    {
         try
         {
-            var parts =
-                rawResponse.Split(
-                    '\n',
-                    2,
-                    StringSplitOptions.None);
-
-            if (parts.Length < 2)
-                return rawResponse;
-
-            var responseBody = parts[1];
+            var clean =
+                ExtractJson(json);
 
             using var document =
-                JsonDocument.Parse(responseBody);
+                JsonDocument.Parse(clean);
 
-            var root =
-                document.RootElement;
+            return FindStringProperty(
+                document.RootElement,
+                "branchId");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"ExtractBranchId error: {ex.Message}");
 
-            if (!root.TryGetProperty(
-                    "result",
-                    out var result))
+            return null;
+        }
+    }
+
+    // ============================================================
+    // FIND STRING PROPERTY RECURSIVELY
+    // ============================================================
+
+    private string? FindStringProperty(
+        JsonElement element,
+        string propertyName)
+    {
+        if (element.ValueKind ==
+            JsonValueKind.Object)
+        {
+            foreach (var property
+                in element.EnumerateObject())
             {
-                return rawResponse;
-            }
-
-            if (!result.TryGetProperty(
-                    "content",
-                    out var content))
-            {
-                return rawResponse;
-            }
-
-            if (content.GetArrayLength() == 0)
-            {
-                return JsonSerializer.Serialize(new
+                if (string.Equals(
+                        property.Name,
+                        propertyName,
+                        StringComparison.OrdinalIgnoreCase))
                 {
-                    success = false,
-                    message =
-                        "Silpo MCP повернув порожній результат."
-                });
-            }
+                    if (property.Value.ValueKind ==
+                        JsonValueKind.String)
+                    {
+                        return property.Value.GetString();
+                    }
 
-            var text =
-                content[0]
-                    .GetProperty("text")
-                    .GetString();
+                    if (property.Value.ValueKind ==
+                        JsonValueKind.Number)
+                    {
+                        return property.Value.ToString();
+                    }
+                }
 
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return JsonSerializer.Serialize(new
+                var nested =
+                    FindStringProperty(
+                        property.Value,
+                        propertyName);
+
+                if (!string.IsNullOrWhiteSpace(
+                        nested))
                 {
-                    success = false,
-                    message =
-                        "Silpo MCP не повернув текст."
-                });
+                    return nested;
+                }
             }
-
-            using var slotsDocument =
-                JsonDocument.Parse(text);
-
-            if (!slotsDocument.RootElement
-                    .TryGetProperty(
-                        "slots",
-                        out var slots))
+        }
+        else if (element.ValueKind ==
+                 JsonValueKind.Array)
+        {
+            foreach (var item
+                in element.EnumerateArray())
             {
-                return JsonSerializer.Serialize(new
+                var nested =
+                    FindStringProperty(
+                        item,
+                        propertyName);
+
+                if (!string.IsNullOrWhiteSpace(
+                        nested))
                 {
-                    success = false,
-                    message =
-                        "У відповіді Silpo немає slots."
-                });
+                    return nested;
+                }
             }
+        }
 
-            var kyivTimeZone =
-                TimeZoneInfo.FindSystemTimeZoneById(
-                    "FLE Standard Time");
+        return null;
+    }
 
-            var availableSlots =
+    // ============================================================
+    // PARSE JSON ELEMENT
+    // ============================================================
+
+    private JsonElement ParseJsonElement(
+        string json)
+    {
+        var clean =
+            ExtractJson(json);
+
+        using var document =
+            JsonDocument.Parse(clean);
+
+        return document.RootElement.Clone();
+    }
+
+    // ============================================================
+    // NORMALIZE TIME SLOTS
+    // ============================================================
+
+    private string NormalizeTimeSlots(
+    string rawResponse)
+    {
+        try
+        {
+            var json = ExtractJson(rawResponse);
+
+            using var document =
+                JsonDocument.Parse(json);
+
+            var slots = new List<JsonElement>();
+
+            FindTimeSlots(
+                document.RootElement,
+                slots);
+
+            var normalizedSlots =
                 new List<object>();
 
-            foreach (var slot in slots.EnumerateArray())
+            foreach (var slot in slots)
             {
-                if (!slot.TryGetProperty(
-                        "available",
-                        out var available) ||
-                    !available.GetBoolean())
+                var available =
+                    GetBool(slot, "available");
+
+                var deliveryType =
+                    GetString(slot, "deliveryType");
+
+                // Беремо тільки доступну доставку додому
+                if (!available ||
+                    !string.Equals(
+                        deliveryType,
+                        "DeliveryHome",
+                        StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                var startUtc =
-                    DateTimeOffset.Parse(
-                        slot.GetProperty("start")
-                            .GetString()!);
+                var start =
+                    GetString(slot, "start");
 
-                var endUtc =
-                    DateTimeOffset.Parse(
-                        slot.GetProperty("end")
-                            .GetString()!);
+                var end =
+                    GetString(slot, "end");
 
-                var startKyiv =
-                    TimeZoneInfo.ConvertTime(
-                        startUtc,
-                        kyivTimeZone);
+                var startIso =
+                    GetString(slot, "startIso");
 
-                var endKyiv =
-                    TimeZoneInfo.ConvertTime(
-                        endUtc,
-                        kyivTimeZone);
+                var endIso =
+                    GetString(slot, "endIso");
 
-                availableSlots.Add(new
-                {
-                    date =
-                        startKyiv.ToString(
-                            "dd.MM.yyyy"),
+                // MCP вже повертає ISO UTC:
+                // 2026-09-08T15:00:00+00:00
+                if (string.IsNullOrWhiteSpace(startIso))
+                    startIso = start;
 
-                    start =
-                        startKyiv.ToString(
-                            "HH:mm"),
+                if (string.IsNullOrWhiteSpace(endIso))
+                    endIso = end;
 
-                    end =
-                        endKyiv.ToString(
-                            "HH:mm"),
+                normalizedSlots.Add(
+                    new
+                    {
+                        start,
+                        end,
+                        startIso,
+                        endIso,
+                        available = true,
+                        deliveryType,
 
-                    time =
-                        $"{startKyiv:HH:mm}–{endKyiv:HH:mm}",
+                        deliveryCost =
+                            GetDecimal(
+                                slot,
+                                "deliveryCost"),
 
-                    deliveryType =
-                        slot.GetProperty(
-                            "deliveryType")
-                            .GetString(),
-
-                    deliveryCost =
-                        slot.GetProperty(
-                            "deliveryCost")
-                            .GetDecimal(),
-
-                    minOrderCost =
-                        slot.GetProperty(
-                            "minOrderCost")
-                            .GetDecimal()
-                });
+                        minOrderCost =
+                            GetDecimal(
+                                slot,
+                                "minOrderCost")
+                    });
             }
 
             return JsonSerializer.Serialize(
                 new
                 {
-                    success = true,
-                    total = availableSlots.Count,
-                    slots = availableSlots
+                    success =
+                        normalizedSlots.Count > 0,
+
+                    slots =
+                        normalizedSlots
                 },
                 new JsonSerializerOptions
                 {
@@ -507,197 +834,508 @@ public class SilpoMcpService
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                message =
-                    "Помилка обробки time slots.",
-                error = ex.Message
-            });
-        }
-    }
-
-
-    // ============================================================
-    // FIND PRODUCTS
-    // ============================================================
-
-    public async Task<string> FindProductsAsync(
-        string accessToken,
-        string branchId,
-        string deliveryType,
-        string timeslotStart,
-        string timeslotEnd,
-        string[] products)
-    {
-        var rawResponse =
-            await CallToolAsync(
-                accessToken,
-                7,
-                "silpo_find_products_batch",
-                new
-                {
-                    branchId,
-                    deliveryType,
-                    timeslotStart,
-                    timeslotEnd,
-                    products
-                });
-
-        try
-        {
-            var parts =
-                rawResponse.Split(
-                    '\n',
-                    2,
-                    StringSplitOptions.None);
-
-            if (parts.Length < 2)
-                return rawResponse;
-
-            var responseBody = parts[1];
-
-            using var document =
-                JsonDocument.Parse(responseBody);
-
-            var root =
-                document.RootElement;
-
-            if (!root.TryGetProperty(
-                    "result",
-                    out var result))
-            {
-                return responseBody;
-            }
-
-            if (!result.TryGetProperty(
-                    "content",
-                    out var contentArray))
-            {
-                return responseBody;
-            }
-
-            if (contentArray.GetArrayLength() == 0)
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    success = false,
-                    message =
-                        "Silpo MCP повернув порожній результат."
-                });
-            }
-
-            var text =
-                contentArray[0]
-                    .GetProperty("text")
-                    .GetString();
-
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    success = false,
-                    message =
-                        "Silpo MCP не повернув текст."
-                });
-            }
-
-            using var innerDocument =
-                JsonDocument.Parse(text);
-
-            // Дуже важливо:
-            // Clone перед Dispose JsonDocument
-            var cleanResult =
-                innerDocument.RootElement.Clone();
+            Console.WriteLine(
+                $"NormalizeTimeSlots error: {ex.Message}");
 
             return JsonSerializer.Serialize(
-                cleanResult,
-                new JsonSerializerOptions
+                new
                 {
-                    WriteIndented = true
+                    success = false,
+                    slots = Array.Empty<object>(),
+                    error = ex.Message
                 });
         }
-        catch (JsonException ex)
+    }
+    private bool GetBool(
+    JsonElement element,
+    string propertyName)
+    {
+        if (!element.TryGetProperty(
+                propertyName,
+                out var value))
         {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                message =
-                    "Не вдалося розібрати JSON від Silpo MCP.",
-                error = ex.Message,
-                raw = rawResponse
-            });
+            return false;
         }
+
+        if (value.ValueKind ==
+            JsonValueKind.True)
+        {
+            return true;
+        }
+
+        if (value.ValueKind ==
+            JsonValueKind.False)
+        {
+            return false;
+        }
+
+        if (value.ValueKind ==
+            JsonValueKind.String &&
+            bool.TryParse(
+                value.GetString(),
+                out var result))
+        {
+            return result;
+        }
+
+        return false;
     }
 
-
-    // ============================================================
-    // GET DELIVERY TOOL DESCRIPTION
-    // ============================================================
-
-    public async Task<string> GetDeliveryTypesAsync(
-        string accessToken)
+    private void FindTimeSlots(
+    JsonElement element,
+    List<JsonElement> slots)
     {
-        var toolsResponse =
-            await GetToolsAsync(accessToken);
-
-        try
+        if (element.ValueKind == JsonValueKind.Object)
         {
-            var parts =
-                toolsResponse.Split(
-                    '\n',
-                    2,
-                    StringSplitOptions.None);
-
-            if (parts.Length < 2)
-                return toolsResponse;
-
-            var responseBody = parts[1];
-
-            using var document =
-                JsonDocument.Parse(responseBody);
-
-            if (!document.RootElement.TryGetProperty(
-                    "result",
-                    out var result))
+            if (element.TryGetProperty("start", out _) &&
+                element.TryGetProperty("end", out _) &&
+                element.TryGetProperty("deliveryType", out _))
             {
-                return responseBody;
+                // КРИТИЧНО:
+                // Clone() робить JsonElement незалежним
+                // від JsonDocument, який може бути disposed.
+                slots.Add(element.Clone());
+                return;
             }
 
-            if (!result.TryGetProperty(
-                    "tools",
-                    out var tools))
+            foreach (var property in element.EnumerateObject())
             {
-                return responseBody;
-            }
-
-            foreach (var tool in tools.EnumerateArray())
-            {
-                if (tool.GetProperty("name")
-                        .GetString()
-                    == "silpo_get_available_delivery_types")
+                if (string.Equals(
+                        property.Name,
+                        "text",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    property.Value.ValueKind == JsonValueKind.String)
                 {
-                    return JsonSerializer.Serialize(
-                        tool,
-                        new JsonSerializerOptions
-                        {
-                            WriteIndented = true
-                        });
+                    var text = property.Value.GetString();
+
+                    if (string.IsNullOrWhiteSpace(text))
+                        continue;
+
+                    try
+                    {
+                        using var textDocument =
+                            JsonDocument.Parse(text);
+
+                        FindTimeSlots(
+                            textDocument.RootElement,
+                            slots);
+                    }
+                    catch
+                    {
+                        // text може бути звичайним текстом,
+                        // а не JSON — просто пропускаємо.
+                    }
+                }
+                else
+                {
+                    FindTimeSlots(
+                        property.Value,
+                        slots);
                 }
             }
-
-            return
-                "Tool silpo_get_available_delivery_types не знайдено.";
         }
-        catch (JsonException ex)
+        else if (element.ValueKind == JsonValueKind.Array)
         {
-            return JsonSerializer.Serialize(new
+            foreach (var item in element.EnumerateArray())
             {
-                success = false,
-                message =
-                    "Помилка розбору tools/list.",
-                error = ex.Message
-            });
+                FindTimeSlots(
+                    item,
+                    slots);
+            }
         }
     }
+    // ============================================================
+    // BUILD KYIV ISO
+    // ============================================================
+
+    private string BuildKyivIso(
+        string date,
+        string time)
+    {
+        if (DateTime.TryParseExact(
+                $"{date} {time}",
+                "dd.MM.yyyy HH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var dateTime))
+        {
+            return
+                $"{dateTime:yyyy-MM-dd}T" +
+                $"{dateTime:HH:mm:ss}+03:00";
+        }
+
+        return
+            $"{date}T{time}:00+03:00";
+    }
+
+    // ============================================================
+    // GET STRING
+    // ============================================================
+
+    private string? GetString(
+        JsonElement element,
+        string propertyName)
+    {
+        if (!element.TryGetProperty(
+                propertyName,
+                out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind ==
+            JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+
+        return value.ToString();
+    }
+
+    // ============================================================
+    // GET DECIMAL
+    // ============================================================
+
+    private decimal? GetDecimal(
+        JsonElement element,
+        string propertyName)
+    {
+        if (!element.TryGetProperty(
+                propertyName,
+                out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind ==
+                JsonValueKind.Number &&
+            value.TryGetDecimal(
+                out var number))
+        {
+            return number;
+        }
+
+        if (value.ValueKind ==
+                JsonValueKind.String &&
+            decimal.TryParse(
+                value.GetString(),
+                NumberStyles.Any,
+                CultureInfo.InvariantCulture,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    // ============================================================
+    // EXTRACT MCP JSON
+    // ============================================================
+
+    private string ExtractMcpJson(
+        string rawResponse)
+    {
+        if (string.IsNullOrWhiteSpace(
+                rawResponse))
+        {
+            throw new Exception(
+                "Silpo MCP повернув порожню відповідь.");
+        }
+
+        var trimmed =
+            rawResponse.Trim();
+
+        if (trimmed.StartsWith("{") ||
+            trimmed.StartsWith("["))
+        {
+            return trimmed;
+        }
+
+        var lines =
+            rawResponse.Split(
+                '\n',
+                StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            var current =
+                line.Trim();
+
+            if (!current.StartsWith(
+                    "data:",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var data =
+                current[
+                    "data:".Length..]
+                    .Trim();
+
+            if (data == "[DONE]")
+                continue;
+
+            if (data.StartsWith("{") ||
+                data.StartsWith("["))
+            {
+                return data;
+            }
+        }
+
+        return ExtractJson(
+            rawResponse);
+    }
+
+    // ============================================================
+    // EXTRACT JSON
+    // ============================================================
+
+    private string ExtractJson(
+        string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new Exception(
+                "Порожня відповідь MCP.");
+        }
+
+        var firstBrace =
+            raw.IndexOf('{');
+
+        var firstBracket =
+            raw.IndexOf('[');
+
+        var positions =
+            new[]
+            {
+                firstBrace,
+                firstBracket
+            }
+            .Where(x => x >= 0)
+            .ToArray();
+
+        if (positions.Length == 0)
+        {
+            throw new Exception(
+                "У відповіді MCP не знайдено JSON.");
+        }
+
+        var start =
+            positions.Min();
+
+        return raw[start..].Trim();
+    }
+    public async Task<string> InitializeBranchByAddressAsync(
+    string accessToken,
+    string address)
+    {
+        if (string.IsNullOrWhiteSpace(accessToken))
+            throw new ArgumentException(
+                "Access token не може бути порожнім.");
+
+        if (string.IsNullOrWhiteSpace(address))
+            throw new ArgumentException(
+                "Адреса не може бути порожньою.");
+
+        Console.WriteLine();
+        Console.WriteLine("========== DETERMINE SILPO BRANCH ==========");
+        Console.WriteLine($"Address: {address}");
+        Console.WriteLine("============================================");
+
+        // ------------------------------------------------------------
+        // 1. Знаходимо адресу
+        // ------------------------------------------------------------
+
+        var addressResult =
+            await FindAddressAsync(
+                accessToken,
+                address);
+
+        Console.WriteLine();
+        Console.WriteLine("========== ADDRESS RESULT ==========");
+        Console.WriteLine(addressResult);
+        Console.WriteLine("====================================");
+
+        // ------------------------------------------------------------
+        // 2. Витягуємо latitude / longitude
+        // ------------------------------------------------------------
+
+        var latitude =
+            ExtractDoubleProperty(
+                addressResult,
+                "latitude");
+
+        var longitude =
+            ExtractDoubleProperty(
+                addressResult,
+                "longitude");
+
+        if (!latitude.HasValue ||
+            !longitude.HasValue)
+        {
+            throw new Exception(
+                "Silpo не повернув координати для вказаної адреси.");
+        }
+
+        Console.WriteLine(
+            $"Latitude: {latitude.Value}");
+
+        Console.WriteLine(
+            $"Longitude: {longitude.Value}");
+
+        // ------------------------------------------------------------
+        // 3. Визначаємо доступні типи доставки
+        // ------------------------------------------------------------
+
+        var deliveryResult =
+            await GetAvailableDeliveryTypesAsync(
+                accessToken,
+                latitude.Value,
+                longitude.Value);
+
+        Console.WriteLine();
+        Console.WriteLine("========== DELIVERY TYPES ==========");
+        Console.WriteLine(deliveryResult);
+        Console.WriteLine("====================================");
+
+        // ------------------------------------------------------------
+        // 4. Витягуємо branchId
+        // ------------------------------------------------------------
+
+        var branchId =
+            ExtractBranchId(
+                deliveryResult);
+
+        if (string.IsNullOrWhiteSpace(branchId))
+        {
+            throw new Exception(
+                "Silpo не повернув branchId для вказаної адреси.");
+        }
+
+        // ------------------------------------------------------------
+        // 5. Зберігаємо контекст
+        // ------------------------------------------------------------
+
+        _tokenStore.BranchId =
+            branchId;
+
+        _tokenStore.DeliveryAddress =
+            address;
+
+        Console.WriteLine();
+        Console.WriteLine("========== SILPO BRANCH SELECTED ==========");
+        Console.WriteLine($"Address:    {address}");
+        Console.WriteLine($"Latitude:   {latitude}");
+        Console.WriteLine($"Longitude:  {longitude}");
+        Console.WriteLine($"BranchId:   {_tokenStore.BranchId}");
+        Console.WriteLine("===========================================");
+
+        return JsonSerializer.Serialize(
+            new
+            {
+                success = true,
+
+                address,
+
+                latitude,
+                longitude,
+
+                branchId =
+                    _tokenStore.BranchId,
+
+                deliveryType =
+                    "DeliveryHome"
+            },
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+    }
+    private double? ExtractDoubleProperty(
+    string json,
+    string propertyName)
+    {
+        try
+        {
+            var clean =
+                ExtractJson(json);
+
+            using var document =
+                JsonDocument.Parse(clean);
+
+            return FindDoubleProperty(
+                document.RootElement,
+                propertyName);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"ExtractDoubleProperty error: {ex.Message}");
+
+            return null;
+        }
+    }
+    private double? FindDoubleProperty(
+    JsonElement element,
+    string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property
+                     in element.EnumerateObject())
+            {
+                if (string.Equals(
+                        property.Name,
+                        propertyName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    if (property.Value.ValueKind ==
+                        JsonValueKind.Number &&
+                        property.Value.TryGetDouble(
+                            out var number))
+                    {
+                        return number;
+                    }
+
+                    if (property.Value.ValueKind ==
+                        JsonValueKind.String &&
+                        double.TryParse(
+                            property.Value.GetString(),
+                            NumberStyles.Any,
+                            CultureInfo.InvariantCulture,
+                            out var parsed))
+                    {
+                        return parsed;
+                    }
+                }
+
+                var nested =
+                    FindDoubleProperty(
+                        property.Value,
+                        propertyName);
+
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item
+                     in element.EnumerateArray())
+            {
+                var nested =
+                    FindDoubleProperty(
+                        item,
+                        propertyName);
+
+                if (nested.HasValue)
+                    return nested;
+            }
+        }
+
+        return null;
+    }
 }
+

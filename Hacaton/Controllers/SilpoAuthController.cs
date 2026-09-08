@@ -329,7 +329,7 @@ public class SilpoAuthController : ControllerBase
         var result =
             await silpoMcpService.GetTimeSlotsAsync(
                 _tokenStore.AccessToken,
-                branchId,
+                
                 deliveryType);
 
         return Content(
@@ -400,7 +400,7 @@ if (string.IsNullOrWhiteSpace(token))
             var slotsResult =
                 await silpoMcpService.GetTimeSlotsAsync(
                     token,
-                    DefaultBranchId,
+                    
                     DefaultDeliveryType);
 
             if (string.IsNullOrWhiteSpace(slotsResult))
@@ -599,7 +599,7 @@ if (string.IsNullOrWhiteSpace(token))
             var productsResult =
                 await silpoMcpService.FindProductsAsync(
                     token,
-                    DefaultBranchId,
+                    
                     DefaultDeliveryType,
                     timeslotStart,
                     timeslotEnd,
