@@ -1357,14 +1357,42 @@ if (messageInput) {
 // LOGIN
 // ======================================================
 
-if (loginBtn) {
 
-    loginBtn.addEventListener(
-        "click",
-        function () {
 
-            window.location.href =
-                "/api/silpo/login";
+async function checkSilpoAuth() {
+    if (!loginBtn) return;
+
+    try {
+        const response = await fetch("/api/silpo/status");
+
+        if (!response.ok) {
+            return;
         }
-    );
+
+        const data = await response.json();
+
+        if (data.authenticated === true) {
+            loginBtn.textContent = "Ви авторизовані ✓";
+            loginBtn.disabled = true;
+        } else {
+            loginBtn.textContent = "Увійти через Сільпо";
+            loginBtn.disabled = false;
+            loginBtn.className = "btn btn-danger"; 
+        }
+
+    } catch (error) {
+        console.error("Помилка перевірки авторизації Silpo:", error);
+    }
 }
+
+
+if (loginBtn) {
+    loginBtn.addEventListener("click", function () {
+        window.location.href = "/api/silpo/login";
+    });
+}
+
+
+
+checkSilpoAuth();
+

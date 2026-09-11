@@ -15,7 +15,7 @@ public class SilpoAuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly SilpoTokenStore _tokenStore;
 
-    // Branch ID, який ти вже використовував
+    
     private const string DefaultBranchId =
         "1edb6b38-214b-66d6-a8e0-7f2fdd178564";
 
